@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yorum Tarayıcı</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1a1d21; --muted: #6b7280;
+    --border: #e4e7ec; --accent: #4f46e5; --accent-soft: #eef2ff;
+    --star: #f59e0b; --chip: #ffffff; --chip-on: #4f46e5; --chip-on-text: #fff;
+    --reply-bg: #f8fafc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101215; --card: #17191d; --text: #e7e9ec; --muted: #9aa1ab;
+      --border: #262a30; --accent: #818cf8; --accent-soft: #1e2140;
+      --star: #fbbf24; --chip: #17191d; --chip-on: #4f46e5; --chip-on-text: #fff;
+      --reply-bg: #1c1f24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--border); padding: 14px 20px 10px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  h1 { font-size: 17px; margin: 0 14px 0 0; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  select, input[type=search], .btn {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 14px; outline: none;
+  }
+  input[type=search] { min-width: 220px; flex: 1; max-width: 380px; }
+  select:focus, input:focus { border-color: var(--accent); }
+  .btn { cursor: pointer; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    border: 1px solid var(--border); background: var(--chip); color: var(--text);
+    border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+    user-select: none; transition: all .12s;
+  }
+  .chip small { color: var(--muted); margin-left: 4px; }
+  .chip.on { background: var(--chip-on); border-color: var(--chip-on); color: var(--chip-on-text); }
+  .chip.on small { color: #ffffffcc; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px 20px 60px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .card-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stars { color: var(--star); letter-spacing: 2px; font-size: 14px; }
+  .stars .off { opacity: .25; }
+  .date { color: var(--muted); font-size: 13px; }
+  .badge {
+    font-size: 12px; border-radius: 6px; padding: 2px 8px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 500;
+  }
+  .badge.src { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .badge.edited { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+  .shopline { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .body { margin-top: 8px; white-space: pre-line; overflow-wrap: anywhere; }
+  details.reply { margin-top: 10px; }
+  details.reply summary { cursor: pointer; color: var(--accent); font-size: 13px; user-select: none; }
+  details.reply div {
+    margin-top: 6px; padding: 10px 12px; background: var(--reply-bg);
+    border-left: 3px solid var(--border); border-radius: 6px;
+    font-size: 14px; white-space: pre-line; overflow-wrap: anywhere;
+  }
+  #more {
+    display: block; margin: 20px auto; padding: 9px 22px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    font-size: 14px; cursor: pointer;
+  }
+  #more:hover { border-color: var(--accent); color: var(--accent); }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  /* DB loader */
+  #loader { max-width: 560px; margin: 12vh auto; padding: 0 20px; text-align: center; }
+  #loader h2 { font-size: 20px; margin-bottom: 6px; }
+  #loader p { color: var(--muted); margin: 6px 0 20px; }
+  #drop {
+    border: 2px dashed var(--border); border-radius: 16px; padding: 44px 20px;
+    background: var(--card); transition: all .15s; cursor: pointer;
+  }
+  #drop.hot { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { color: var(--accent); }
+  /* ---- tabs ---- */
+  .tabs { display: inline-flex; gap: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .tab { border: none; background: transparent; color: var(--muted); border-radius: 7px; padding: 6px 14px; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .tab.on { background: var(--accent); color: #fff; }
+  .tab:not(.on):hover { color: var(--text); }
+  /* ---- opportunities ---- */
+  #oppbox { max-width: 1180px; }
+  .opp-intro { color: var(--muted); font-size: 13px; margin: 2px 0 4px; }
+  .sec-title { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+  .sec-title small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .heat-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+  table.heat { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  table.heat th, table.heat td { padding: 0; text-align: center; }
+  table.heat thead th { position: sticky; top: 0; z-index: 2; background: var(--card); color: var(--muted); font-weight: 500; padding: 9px 7px; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: bottom; }
+  table.heat th.rowhdr { text-align: left; padding: 6px 14px 6px 12px; color: var(--text); font-weight: 500; white-space: nowrap; position: sticky; left: 0; z-index: 1; background: var(--card); border-bottom: 1px solid var(--border); }
+  table.heat th.corner { position: sticky; left: 0; z-index: 3; }
+  .cell { display: block; padding: 11px 10px; cursor: pointer; color: var(--text); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .cell.zero { color: var(--muted); opacity: .4; cursor: default; font-weight: 400; }
+  .cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+  /* tag badges (theme-agnostic translucent) */
+  .tag { font-size: 11px; border-radius: 5px; padding: 1px 7px; font-weight: 600; white-space: nowrap; }
+  .tag.feature_gap     { background: rgba(239,68,68,.16);  color: #ef4444; }
+  .tag.feature_request { background: rgba(59,130,246,.18); color: #3b82f6; }
+  .tag.bug             { background: rgba(249,115,22,.16); color: #f97316; }
+  .tag.service         { background: rgba(148,163,184,.20);color: #94a3b8; }
+  .tag.pricing         { background: rgba(234,179,8,.20);  color: #d19b00; }
+  .tag.praise          { background: rgba(34,197,94,.16);  color: #22c55e; }
+  .tag.churn           { background: rgba(236,72,153,.18); color: #ec4899; }
+  .conf { font-size: 11px; color: var(--muted); }
+  mark { background: rgba(129,140,248,.28); color: inherit; padding: 0 2px; border-radius: 3px; }
+  /* churn flow */
+  .flow { display: flex; flex-wrap: wrap; gap: 10px; }
+  .flow .dest { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--card); min-width: 190px; max-width: 340px; }
+  .flow .dest .hd { font-size: 13px; }
+  .flow .dest .hd b { color: var(--accent); }
+  .flow .dest .n { color: var(--muted); font-size: 12px; }
+  .flow .dest .ex { color: var(--muted); font-size: 12px; margin-top: 6px; font-style: italic; overflow-wrap: anywhere; }
+  .opp-hint { color: var(--muted); padding: 14px 0; font-size: 14px; }
+  .opp-hint code { background: var(--reply-bg); padding: 2px 6px; border-radius: 5px; }
+  .metricline { color: var(--muted); font-size: 12.5px; margin: 2px 0 14px; font-variant-numeric: tabular-nums; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="loader">
+  <h2>💬 Yorum Tarayıcı</h2>
+  <p>Tamamen tarayıcıda çalışır — sunucu yok. <code>reviews.db</code> dosyanı seç, gerisi burada.</p>
+  <div id="drop">
+    <p style="margin:0"><strong>reviews.db</strong> dosyasını buraya sürükle<br>ya da tıklayıp seç</p>
+  </div>
+  <input id="file" type="file" accept=".db,.sqlite,.sqlite3" class="hide">
+  <p id="loaderr" style="color:#dc2626"></p>
+</div>
+
+<header id="app" class="hide">
+  <div class="row">
+    <h1>💬 <span id="count"></span></h1>
+    <div class="tabs">
+      <button class="tab on" id="tab-list" data-tab="list">Yorumlar</button>
+      <button class="tab" id="tab-opp" data-tab="opp">Fırsatlar</button>
+    </div>
+    <span style="flex:1"></span>
+    <button id="reload" class="btn" title="Güncel reviews.db'yi yeniden yükle">⟳ DB</button>
+  </div>
+  <div id="listControls">
+    <div class="row" style="margin-top:10px">
+      <label class="date" for="source">Kaynak</label>
+      <select id="source"><option value="">Tümü</option></select>
+      <select id="sort">
+        <option value="newest">En yeni</option>
+        <option value="oldest">En eski</option>
+        <option value="rating_asc">Puan (artan)</option>
+        <option value="rating_desc">Puan (azalan)</option>
+      </select>
+      <input id="q" type="search" placeholder="Yorumlarda ara… (ör. pricing, support)">
+    </div>
+    <div class="chips" id="products"></div>
+    <div class="chips" id="stars"></div>
+    <div class="chips" id="themes"></div>
+    <div class="chips" id="kinds"></div>
+  </div>
+</header>
+
+<main id="mainbox" class="hide">
+  <div id="list"></div>
+  <button id="more" hidden>Daha fazla yükle</button>
+</main>
+
+<main id="oppbox" class="hide">
+  <div class="opp-intro" id="oppIntro"></div>
+  <div id="oppMsg" class="opp-hint hide"></div>
+  <div id="heatSection">
+    <div class="sec-title">Isı haritası <small>satır = tema · sütun = uygulama · hücre = fırsat skoru (0–100)</small></div>
+    <div class="heat-wrap"><table class="heat" id="heatTable"></table></div>
+  </div>
+  <div id="drillSection">
+    <div class="sec-title" id="drillTitle">Detay</div>
+    <div id="drill"><div class="opp-hint">Bir hücreye tıkla → o tema + uygulamanın yorumları, alıntılar vurgulu.</div></div>
+  </div>
+  <div id="churnSection">
+    <div class="sec-title">Terk sinyalleri <small>kim, kime, neden</small></div>
+    <div class="flow" id="churnFlow"></div>
+  </div>
+</main>
+
+<script src="./web/vendor/sql-wasm.js"></script>
+<script src="./web/vendor/sql-wasm-b64.js"></script>
+<script>
+const SOURCE_LABELS = { shopify: "Shopify App Store" };
+const JOIN = "FROM reviews r LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug";
+const PRODUCT_EXPR = "COALESCE(a.product, r.app_slug)";
+const SORTS = {
+  newest: "r.review_date DESC",
+  oldest: "r.review_date ASC",
+  rating_asc: "r.rating ASC, r.review_date DESC",
+  rating_desc: "r.rating DESC, r.review_date DESC",
+};
+const PAGE = 50;
+const state = { source: "", product: "", stars: new Set(), q: "", sort: "newest",
+                offset: 0, shown: 0, tab: "list",
+                themes: new Set(), kinds: new Set(), oppSel: null };
+let SQL = null, db = null, products = [], hasTags = false;
+
+// ---- opportunity scoring (mirror of opportunity_report.py) ----------------
+const OPP = { W: { frequency: 1, persistence: 1, seniority: 1, feature_shape: 1 },
+  FREQ_SAT: 0.20, DATA_SPAN_YEARS: 11, RECENCY_MONTHS: 12, RECENCY_PENALTY: 0.40,
+  SENIORITY_SAT_YEARS: 3, PERSISTENCE_FLOOR: 0.15, SENIORITY_FLOOR: 0.20, MIN_FREQ: 2 };
+const FEATURE_KINDS = new Set(["feature_gap", "feature_request"]);
+const THEME_ORDER = ["deliverability", "flows_automation", "segmentation", "data_management",
+  "templates_editor", "reporting_analytics", "integrations_sync", "sms", "forms_popups",
+  "pricing_billing", "support", "onboarding_migration", "performance_bugs", "other"];
+const THEME_TR = { deliverability: "Teslim edilebilirlik", flows_automation: "Akışlar / otomasyon",
+  segmentation: "Segmentasyon", data_management: "Veri yönetimi", templates_editor: "Şablon / editör",
+  reporting_analytics: "Raporlama", integrations_sync: "Entegrasyon / senk.", sms: "SMS",
+  forms_popups: "Form / popup", pricing_billing: "Fiyat / faturalama", support: "Destek",
+  onboarding_migration: "Kurulum / geçiş", performance_bugs: "Performans / hata", other: "Diğer" };
+const KIND_TR = { feature_gap: "özellik eksiği", feature_request: "özellik isteği",
+  service: "hizmet", pricing: "fiyat", bug: "hata", praise: "övgü" };
+
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+const fmt = n => (n ?? 0).toLocaleString("tr-TR");
+
+function q(sql, params = []) {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.bind(params);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    return rows;
+  } finally { stmt.free(); }
+}
+
+// ---- data loading -------------------------------------------------------
+async function boot() {
+  SQL = await initSqlJs({
+    wasmBinary: Uint8Array.from(atob(window.SQL_WASM_B64), c => c.charCodeAt(0)),
+  });
+  try {  // if this page is served (http), grab the sibling db automatically
+    const r = await fetch("./reviews.db");
+    if (r.ok) return loadDb(await r.arrayBuffer());
+  } catch (e) { /* file:// blocks fetch — fall back to the picker */ }
+}
+
+function loadDb(buf) {
+  let next;
+  try {
+    next = new SQL.Database(new Uint8Array(buf));
+    next.prepare("SELECT 1 FROM reviews LIMIT 1").free();  // sanity check
+  } catch (e) {
+    next?.close();  // don't leak the WASM db handle on a bad file
+    const msg = "Bu dosya bir reviews.db değil gibi görünüyor.";
+    $("loaderr").textContent = msg;                          // for the first-load screen
+    if ($("loader").classList.contains("hide")) alert(msg);  // ⟳ DB after a good load
+    return;
+  }
+  db?.close();
+  db = next;
+  hasTags = q(`SELECT name FROM sqlite_master WHERE type='table' AND name='review_tags'`).length > 0
+            && q(`SELECT COUNT(*) AS n FROM review_tags`)[0].n > 0;
+  state.themes.clear(); state.kinds.clear(); state.oppSel = null;
+  $("loader").classList.add("hide");
+  $("app").classList.remove("hide");
+  loadFilters();
+  setTab(state.tab);
+  refresh();
+}
+
+// ---- filters ------------------------------------------------------------
+function loadFilters() {
+  const sources = q(`SELECT r.source AS id, COUNT(*) AS n ${JOIN} GROUP BY r.source ORDER BY n DESC`);
+  const sel = $("source");
+  sel.replaceChildren(Object.assign(el("option"), { value: "", textContent: "Tümü" }));
+  for (const s of sources) {
+    const o = el("option", "", `${SOURCE_LABELS[s.id] || s.id} (${fmt(s.n)})`);
+    o.value = s.id;
+    sel.appendChild(o);
+  }
+  sel.value = state.source;
+  products = q(`SELECT ${PRODUCT_EXPR} AS product, COUNT(*) AS n ${JOIN} GROUP BY 1 ORDER BY n DESC`);
+  renderProductChips();
+  renderTagChips();
+}
+
+function renderTagChips() {
+  const themeBox = $("themes"), kindBox = $("kinds");
+  themeBox.replaceChildren(); kindBox.replaceChildren();
+  if (!hasTags) return;
+  const tc = q(`SELECT theme, COUNT(DISTINCT review_id) AS n FROM review_tags GROUP BY theme`);
+  const kc = q(`SELECT kind, COUNT(DISTINCT review_id) AS n FROM review_tags GROUP BY kind`);
+  const cmap = {}; tc.forEach(r => cmap[r.theme] = r.n);
+  const kmap = {}; kc.forEach(r => kmap[r.kind] = r.n);
+  for (const th of THEME_ORDER) {
+    if (!cmap[th]) continue;
+    const c = el("span", "chip" + (state.themes.has(th) ? " on" : ""));
+    c.append(THEME_TR[th] || th, Object.assign(el("small"), { textContent: fmt(cmap[th]) }));
+    c.onclick = () => { const on = state.themes.has(th); on ? state.themes.delete(th) : state.themes.add(th); c.classList.toggle("on", !on); refresh(); };
+    themeBox.appendChild(c);
+  }
+  for (const k of ["feature_gap", "feature_request", "bug", "service", "pricing", "praise"]) {
+    if (!kmap[k]) continue;
+    const c = el("span", "chip" + (state.kinds.has(k) ? " on" : ""));
+    c.append(KIND_TR[k] || k, Object.assign(el("small"), { textContent: fmt(kmap[k]) }));
+    c.onclick = () => { const on = state.kinds.has(k); on ? state.kinds.delete(k) : state.kinds.add(k); c.classList.toggle("on", !on); refresh(); };
+    kindBox.appendChild(c);
+  }
+}
+
+function renderProductChips() {
+  const box = $("products");
+  box.replaceChildren();
+  const all = el("span", "chip" + (state.product ? "" : " on"), "Tüm ürünler");
+  all.onclick = () => { state.product = ""; refresh(); };
+  box.appendChild(all);
+  for (const p of products) {
+    const c = el("span", "chip" + (state.product === p.product ? " on" : ""));
+    c.append(p.product, Object.assign(el("small"), { textContent: fmt(p.n) }));
+    c.onclick = () => { state.product = state.product === p.product ? "" : p.product; refresh(); };
+    box.appendChild(c);
+  }
+}
+
+function renderStarChips(counts) {
+  const box = $("stars");
+  box.replaceChildren();
+  for (let s = 1; s <= 5; s++) {
+    const c = el("span", "chip" + (state.stars.has(s) ? " on" : ""));
+    c.append(`${s}★`, Object.assign(el("small"), { textContent: fmt(counts[s] || 0) }));
+    c.onclick = () => {
+      state.stars.has(s) ? state.stars.delete(s) : state.stars.add(s);
+      refresh();
+    };
+    box.appendChild(c);
+  }
+}
+
+// ---- query --------------------------------------------------------------
+function queryReviews() {
+  const baseWhere = ["1=1"], baseParams = [];
+  if (state.source) { baseWhere.push("r.source = ?"); baseParams.push(state.source); }
+  if (state.product) { baseWhere.push(`${PRODUCT_EXPR} = ?`); baseParams.push(state.product); }
+  if (state.q) {
+    const esc = state.q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    baseWhere.push("(r.body LIKE ? ESCAPE '\\' OR r.dev_reply LIKE ? ESCAPE '\\' "
+                   + "OR r.shop_name LIKE ? ESCAPE '\\')");
+    const like = `%${esc}%`;
+    baseParams.push(like, like, like);
+  }
+  const where = [...baseWhere], params = [...baseParams];
+  const stars = [...state.stars];
+  if (stars.length) {
+    where.push(`r.rating IN (${stars.map(() => "?").join(",")})`);
+    params.push(...stars);
+  }
+  const tagExists = (col, vals) =>
+    `EXISTS (SELECT 1 FROM review_tags t WHERE t.source = r.source `
+    + `AND t.app_slug = r.app_slug AND t.review_id = r.review_id `
+    + `AND t.${col} IN (${vals.map(() => "?").join(",")}))`;
+  if (state.themes.size) { where.push(tagExists("theme", [...state.themes])); params.push(...state.themes); }
+  if (state.kinds.size) { where.push(tagExists("kind", [...state.kinds])); params.push(...state.kinds); }
+  const order = SORTS[state.sort] || SORTS.newest;
+  const cond = where.join(" AND "), baseCond = baseWhere.join(" AND ");
+  const limit = Math.max(1, Math.min(200, PAGE));
+
+  const items = q(`SELECT r.*, a.product AS product, a.app_name AS app_name ${JOIN} `
+                  + `WHERE ${cond} ORDER BY ${order} LIMIT ? OFFSET ?`,
+                  [...params, limit, Math.max(0, state.offset)]);
+  const total = q(`SELECT COUNT(*) AS n ${JOIN} WHERE ${cond}`, params)[0].n;
+  const sc = q(`SELECT r.rating AS rating, COUNT(*) AS n ${JOIN} WHERE ${baseCond} GROUP BY r.rating`,
+               baseParams);
+  const star_counts = {};
+  sc.forEach(r => { star_counts[r.rating] = r.n; });
+  return { total, star_counts, items };
+}
+
+// ---- render -------------------------------------------------------------
+function starRow(rating) {
+  const s = el("span", "stars");
+  for (let i = 1; i <= 5; i++) s.appendChild(el("span", i <= (rating || 0) ? "" : "off", "★"));
+  return s;
+}
+
+function card(r) {
+  const c = el("div", "card");
+  const top = el("div", "card-top");
+  top.appendChild(starRow(r.rating));
+  top.appendChild(el("span", "date", r.review_date || ""));
+  if (r.edited) top.appendChild(el("span", "badge edited", "düzenlendi"));
+  top.appendChild(el("span", "badge", r.product || r.app_slug));
+  top.appendChild(el("span", "badge src", SOURCE_LABELS[r.source] || r.source));
+  c.appendChild(top);
+
+  const who = [r.shop_name, r.country, r.usage_duration].filter(Boolean).join(" · ");
+  if (who) c.appendChild(el("div", "shopline", who));
+  c.appendChild(el("div", "body", r.body || "(metin yok)"));
+
+  if (r.dev_reply) {
+    const d = el("details", "reply");
+    d.appendChild(el("summary", "", "Geliştirici yanıtı"));
+    d.appendChild(el("div", "", r.dev_reply));
+    c.appendChild(d);
+  }
+  return c;
+}
+
+function refresh(append = false) {
+  state.offset = append ? state.shown : 0;
+  const d = queryReviews();
+  if (!append) $("list").replaceChildren();
+  for (const r of d.items) $("list").appendChild(card(r));
+  if (!append && d.items.length === 0)
+    $("list").appendChild(el("div", "empty", "Bu filtrelerle yorum bulunamadı."));
+  $("count").textContent = `· ${fmt(d.total)} yorum`;
+  renderStarChips(d.star_counts || {});
+  renderProductChips();
+  state.shown = state.offset + d.items.length;
+  $("more").hidden = state.shown >= d.total;
+}
+
+// ---- opportunities view -------------------------------------------------
+function setTab(name) {
+  state.tab = name;
+  const list = name === "list";
+  $("mainbox").classList.toggle("hide", !list);
+  $("oppbox").classList.toggle("hide", list);
+  $("listControls").classList.toggle("hide", !list);
+  $("tab-list").classList.toggle("on", list);
+  $("tab-opp").classList.toggle("on", !list);
+  if (!list) renderOpp();
+}
+
+function usageYears(t) {
+  if (!t) return null;
+  const m = /(\d+(?:\.\d+)?)\s*(minute|hour|day|week|month|year)/i.exec(t);
+  if (!m) return null;
+  const py = { minute: 525600, hour: 8760, day: 365, week: 52.143, month: 12, year: 1 }[m[2].toLowerCase()];
+  return parseFloat(m[1]) / py;
+}
+function geomean(parts) {
+  let prod = 1, ws = 0;
+  for (const [v, w] of parts) { prod *= Math.pow(Math.max(v, 1e-6), w); ws += w; }
+  return ws ? Math.pow(prod, 1 / ws) : 0;
+}
+
+function computeOpp() {
+  const rows = q(`SELECT ${PRODUCT_EXPR} AS app, t.theme AS theme, t.kind AS kind,
+      t.review_id AS review_id, r.review_date AS review_date, r.usage_duration AS usage_duration,
+      t.churn_signal AS churn_signal
+    FROM review_tags t
+    JOIN reviews r ON r.source = t.source AND r.app_slug = t.app_slug AND r.review_id = t.review_id
+    LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug`);
+  const ndRow = q(`SELECT MAX(review_date) AS d FROM reviews WHERE review_date GLOB '20[0-9][0-9]-*'`);
+  const today = ndRow[0].d ? new Date(ndRow[0].d) : new Date();
+  const byApp = {};
+  for (const r of rows) (byApp[r.app] ||= []).push(r);
+  const scored = {};
+  for (const app in byApp) {
+    const tags = byApp[app];
+    const tApp = new Set(tags.map(t => t.review_id)).size || 1;
+    const themes = {};
+    for (const t of tags) (themes[t.theme] ||= []).push(t);
+    scored[app] = { _reviews: tApp, themes: {} };
+    for (const theme in themes) {
+      const tt = themes[theme];
+      const feat = tt.filter(t => FEATURE_KINDS.has(t.kind));
+      const featReviews = new Set(feat.map(t => t.review_id));
+      const nService = tt.filter(t => t.kind === "service").length;
+      const nPricing = tt.filter(t => t.kind === "pricing").length;
+      const fsDenom = feat.length + nService + nPricing;
+      const featureShape = fsDenom ? feat.length / fsDenom : 0;
+      const m = { theme, score: 0, frequency: 0, persistence: 0, seniority: 0,
+        feature_shape: featureShape, n_feature_reviews: featReviews.size, n_tags: tt.length,
+        n_churn: tt.filter(t => t.churn_signal).length, first: null, last: null, avg_usage: 0 };
+      if (featReviews.size >= OPP.MIN_FREQ && featureShape > 0) {
+        const frequency = Math.min(1, (featReviews.size / tApp) / OPP.FREQ_SAT);
+        const ds = feat.map(t => t.review_date).filter(d => /^20\d\d-/.test(d || "")).sort();
+        let persistence = OPP.PERSISTENCE_FLOOR;
+        if (ds.length) {
+          m.first = ds[0]; m.last = ds[ds.length - 1];
+          const spanY = (new Date(m.last) - new Date(m.first)) / (365 * 864e5);
+          const monthsSince = (today - new Date(m.last)) / (30.44 * 864e5);
+          const pSpan = Math.min(1, spanY / OPP.DATA_SPAN_YEARS);
+          persistence = (OPP.PERSISTENCE_FLOOR + (1 - OPP.PERSISTENCE_FLOOR) * pSpan)
+            * (monthsSince <= OPP.RECENCY_MONTHS ? 1 : OPP.RECENCY_PENALTY);
+        }
+        const us = feat.map(t => usageYears(t.usage_duration)).filter(u => u != null);
+        const avgUsage = us.length ? us.reduce((a, b) => a + b, 0) / us.length : 0;
+        m.avg_usage = avgUsage;
+        const seniority = OPP.SENIORITY_FLOOR + (1 - OPP.SENIORITY_FLOOR) * Math.min(1, avgUsage / OPP.SENIORITY_SAT_YEARS);
+        m.frequency = frequency; m.persistence = persistence; m.seniority = seniority;
+        m.score = 100 * geomean([[frequency, OPP.W.frequency], [persistence, OPP.W.persistence],
+          [seniority, OPP.W.seniority], [featureShape, OPP.W.feature_shape]]);
+      }
+      scored[app].themes[theme] = m;
+    }
+  }
+  return scored;
+}
+
+function renderOpp() {
+  $("oppMsg").classList.toggle("hide", hasTags);
+  ["heatSection", "drillSection", "churnSection"].forEach(id => $(id).classList.toggle("hide", !hasTags));
+  if (!hasTags) {
+    $("oppIntro").textContent = "";
+    const p = el("div", "", "Henüz etiket yok — önce etiketlemeyi çalıştır:");
+    const c1 = el("div"); c1.style.marginTop = "8px";
+    c1.appendChild(Object.assign(el("code"), { textContent: "uv run tag_reviews.py --export --app some-app-slug -n 200 --out b.json" }));
+    const c2 = el("div"); c2.style.marginTop = "6px";
+    c2.appendChild(Object.assign(el("code"), { textContent: "# etiketle → uv run tag_reviews.py --import-batch b.tags.json → ⟳ DB" }));
+    $("oppMsg").replaceChildren(p, c1, c2);
+    return;
+  }
+  $("oppIntro").textContent = "Fırsat skoru = sıklık × kalıcılık × kıdem × özellik-şekillilik. "
+    + "Destek/fiyat gibi ‘ürünleşmeyen’ temalar 0’a düşer; öne çıkanlar özellik-şekilli boşluklar.";
+  renderHeatmap(computeOpp());
+  renderChurn();
+  if (state.oppSel) renderDrill(state.oppSel.app, state.oppSel.theme);
+}
+
+function renderHeatmap(scored) {
+  const apps = Object.keys(scored).sort((a, b) => scored[b]._reviews - scored[a]._reviews);
+  const themeMax = {};
+  for (const app of apps) for (const th in scored[app].themes)
+    themeMax[th] = Math.max(themeMax[th] || 0, scored[app].themes[th].score);
+  const themes = Object.keys(themeMax).sort((a, b) =>
+    (themeMax[b] - themeMax[a]) || (THEME_ORDER.indexOf(a) - THEME_ORDER.indexOf(b)));
+  const maxScore = Math.max(1, ...Object.values(themeMax));
+  const tbl = $("heatTable"); tbl.replaceChildren();
+  const htr = el("tr");
+  htr.appendChild(Object.assign(el("th", "rowhdr corner"), { textContent: "tema \\ uygulama" }));
+  for (const app of apps) htr.appendChild(Object.assign(el("th"), { textContent: app }));
+  const thead = el("thead"); thead.appendChild(htr); tbl.appendChild(thead);
+  const tbody = el("tbody");
+  for (const th of themes) {
+    const tr = el("tr");
+    tr.appendChild(Object.assign(el("th", "rowhdr"), { textContent: THEME_TR[th] || th }));
+    for (const app of apps) {
+      const td = el("td");
+      const m = scored[app].themes[th];
+      const s = m ? m.score : 0;
+      if (s > 0) {
+        const alpha = 0.10 + 0.88 * (s / maxScore);
+        const cell = el("span", "cell", s.toFixed(0));
+        cell.style.background = `rgba(99,102,241,${alpha.toFixed(3)})`;
+        if (alpha > 0.55) cell.style.color = "#fff";
+        if (state.oppSel && state.oppSel.app === app && state.oppSel.theme === th) cell.classList.add("sel");
+        cell.title = `${app} · ${THEME_TR[th] || th}\nskor ${s.toFixed(1)}\nsıklık ${m.frequency.toFixed(2)} · kalıcılık ${m.persistence.toFixed(2)} (${m.first}→${m.last}) · kıdem ${m.seniority.toFixed(2)} (~${m.avg_usage.toFixed(1)}y) · özellik-şekli ${m.feature_shape.toFixed(2)}\n${m.n_feature_reviews} özellik-şekilli yorum, ${m.n_churn} terk`;
+        cell.onclick = () => {
+          state.oppSel = { app, theme: th };
+          tbl.querySelectorAll(".cell.sel").forEach(x => x.classList.remove("sel"));
+          cell.classList.add("sel");
+          renderDrill(app, th);
+          $("drillSection").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        };
+        td.appendChild(cell);
+      } else {
+        td.appendChild(Object.assign(el("span", "cell zero"), { textContent: "·" }));
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+}
+
+function slugsFor(app) {
+  const r = q(`SELECT DISTINCT app_slug FROM apps WHERE COALESCE(product, app_slug) = ?`, [app]);
+  return r.length ? r.map(x => x.app_slug) : [app];
+}
+
+function buildHighlighted(text, quotes) {
+  const frag = document.createDocumentFragment();
+  if (!text) return frag;
+  const ranges = [];
+  for (let qt of quotes) {
+    if (!qt) continue;
+    qt = qt.replace(/^\[dev\]:\s*/i, "").trim();
+    if (qt.length < 4) continue;
+    const hay = text.toLowerCase(), needle = qt.toLowerCase();
+    let from = 0, i;
+    while ((i = hay.indexOf(needle, from)) !== -1) {
+      ranges.push([i, i + qt.length]); from = i + qt.length;
+      if (ranges.length > 60) break;
+    }
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of ranges) {
+    if (merged.length && r[0] <= merged[merged.length - 1][1])
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], r[1]);
+    else merged.push([...r]);
+  }
+  let pos = 0;
+  for (const [s, e] of merged) {
+    if (s > pos) frag.appendChild(document.createTextNode(text.slice(pos, s)));
+    frag.appendChild(Object.assign(el("mark"), { textContent: text.slice(s, e) }));
+    pos = e;
+  }
+  if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+  return frag;
+}
+
+function oppCard(r, tags) {
+  const c = el("div", "card");
+  const top = el("div", "card-top");
+  top.appendChild(starRow(r.rating));
+  top.appendChild(el("span", "date", r.review_date || ""));
+  if (r.edited) top.appendChild(el("span", "badge edited", "düzenlendi"));
+  top.appendChild(el("span", "badge", r.product || r.app_slug));
+  for (const k of [...new Set(tags.map(t => t.kind))]) top.appendChild(el("span", "tag " + k, KIND_TR[k] || k));
+  if (tags.some(t => t.churn_signal)) top.appendChild(el("span", "tag churn", "terk"));
+  const sw = [...new Set(tags.map(t => t.switched_to).filter(Boolean))];
+  if (sw.length) top.appendChild(el("span", "tag churn", "→ " + sw.join(", ")));
+  c.appendChild(top);
+  const who = [r.shop_name, r.country, r.usage_duration].filter(Boolean).join(" · ");
+  if (who) c.appendChild(el("div", "shopline", who));
+  const bodyEl = el("div", "body");
+  bodyEl.appendChild(buildHighlighted(r.body || "", tags.map(t => t.quote)));
+  c.appendChild(bodyEl);
+  if (r.dev_reply) {
+    const d = el("details", "reply");
+    d.appendChild(el("summary", "", "Geliştirici yanıtı"));
+    const dd = el("div");
+    dd.appendChild(buildHighlighted(r.dev_reply, tags.map(t => t.quote).filter(x => /^\[dev\]/i.test(x || ""))));
+    d.appendChild(dd);
+    c.appendChild(d);
+  }
+  return c;
+}
+
+function renderDrill(app, theme) {
+  $("drillTitle").textContent = `${app} · ${THEME_TR[theme] || theme}`;
+  const box = $("drill"); box.replaceChildren();
+  const slugs = slugsFor(app);
+  const ph = slugs.map(() => "?").join(",");
+  const trows = q(`SELECT review_id, kind, churn_signal, switched_to, quote, confidence
+    FROM review_tags WHERE theme = ? AND app_slug IN (${ph})`, [theme, ...slugs]);
+  const tagsByRev = {};
+  for (const t of trows) (tagsByRev[t.review_id] ||= []).push(t);
+  const ids = Object.keys(tagsByRev);
+  if (!ids.length) { box.appendChild(el("div", "opp-hint", "Yorum yok.")); return; }
+  const idPh = ids.map(() => "?").join(",");
+  const revs = q(`SELECT r.*, a.product AS product FROM reviews r
+    LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug
+    WHERE r.app_slug IN (${ph}) AND r.review_id IN (${idPh})
+    ORDER BY r.review_date DESC`, [...slugs, ...ids]);
+  box.appendChild(el("div", "metricline",
+    `${revs.length} yorum · ${trows.filter(t => FEATURE_KINDS.has(t.kind)).length} özellik-şekilli etiket · `
+    + `${trows.filter(t => t.churn_signal).length} terk sinyali`));
+  for (const r of revs) box.appendChild(oppCard(r, tagsByRev[r.review_id] || []));
+}
+
+function renderChurn() {
+  const box = $("churnFlow"); box.replaceChildren();
+  const rows = q(`SELECT ${PRODUCT_EXPR} AS app, t.switched_to AS dest, t.quote AS quote
+    FROM review_tags t
+    JOIN reviews r ON r.source = t.source AND r.app_slug = t.app_slug AND r.review_id = t.review_id
+    LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug
+    WHERE t.churn_signal = 1`);
+  if (!rows.length) { box.appendChild(el("div", "opp-hint", "Terk sinyali yok.")); return; }
+  const named = {}, unnamed = {};
+  for (const r of rows) {
+    if (r.dest) (named[r.app + " → " + r.dest] ||= []).push(r);
+    else (unnamed[r.app] ||= []).push(r);
+  }
+  const dest = (label, isBold, rs) => {
+    const d = el("div", "dest");
+    const hd = el("div", "hd");
+    const [from, to] = label.split(" → ");
+    hd.append(from + " → ");
+    hd.appendChild(Object.assign(el("b"), { textContent: to }));
+    hd.appendChild(Object.assign(el("span", "n"), { textContent: " · " + rs.length }));
+    d.appendChild(hd);
+    const ex = rs.find(x => x.quote);
+    if (ex) d.appendChild(Object.assign(el("div", "ex"), { textContent: "“" + ex.quote + "”" }));
+    box.appendChild(d);
+  };
+  Object.entries(named).sort((a, b) => b[1].length - a[1].length).forEach(([k, rs]) => dest(k, true, rs));
+  Object.entries(unnamed).sort((a, b) => b[1].length - a[1].length)
+    .forEach(([app, rs]) => dest(app + " → (belirtilmemiş)", false, rs));
+}
+
+// ---- wiring -------------------------------------------------------------
+const openPicker = () => $("file").click();
+$("drop").onclick = openPicker;
+$("reload").onclick = openPicker;
+$("file").onchange = e => {
+  const f = e.target.files[0];
+  if (f) f.arrayBuffer().then(loadDb);
+  e.target.value = "";  // allow re-picking the same filename after a rescrape
+};
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave", "drop"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f) f.arrayBuffer().then(loadDb);
+});
+
+$("source").onchange = e => { state.source = e.target.value; refresh(); };
+$("sort").onchange = e => { state.sort = e.target.value; refresh(); };
+let t;
+$("q").oninput = e => {
+  clearTimeout(t);
+  t = setTimeout(() => { state.q = e.target.value.trim(); refresh(); }, 250);
+};
+$("more").onclick = () => refresh(true);
+$("tab-list").onclick = () => setTab("list");
+$("tab-opp").onclick = () => setTab("opp");
+
+boot();
+</script>
+</body>
+</html>

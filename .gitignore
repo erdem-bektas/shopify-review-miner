@@ -1,0 +1,20 @@
+# Your own scraped data lives here — do NOT commit it.
+# (sample.db is intentionally tracked as a demo; your real scrape is reviews.db)
+reviews.db
+reviews.db-journal
+exports/
+*.log
+
+# Your own slug -> product-name map (optional) — keep it local
+products.json
+
+# Private analysis / findings — keep the methodology public, the results yours
+docs/opportunity-*.md
+*-heatmap.png
+
+# Local tooling / OS cruft
+__pycache__/
+.DS_Store
+.serena/
+.claude/
+.playwright-mcp/
