@@ -1,0 +1,22 @@
+#!/bin/sh
+# shopify-review-miner — final gate: refuse to PUSH a tree with private files.
+# Catches anything that slipped past pre-commit (e.g. `git add -f`, --no-verify).
+# Override only if you are certain:  git push --no-verify
+
+DENY_PATHS='^reviews\.db$|^reviews\.db-journal$|^products\.json$|^exports/|^docs/opportunity-.*\.md$|\.log$|^\.env'
+Z='0000000000000000000000000000000000000000'
+
+bad=''
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "$local_sha" = "$Z" ] && continue   # branch deletion, nothing to inspect
+  hits=$(git ls-tree -r --name-only "$local_sha" | grep -E "$DENY_PATHS" || true)
+  [ -n "$hits" ] && bad="$bad$hits
+"
+done
+
+if [ -n "$bad" ]; then
+  printf '\033[31m✗ PUSH BLOCKED — private files in the commit(s) you are pushing:\033[0m\n%s\n' "$bad"
+  printf 'Remove them from the commit(s) first.  Override (careful):  git push --no-verify\n'
+  exit 1
+fi
+exit 0

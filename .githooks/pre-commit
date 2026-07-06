@@ -1,0 +1,32 @@
+#!/bin/sh
+# shopify-review-miner — refuse to COMMIT anything that must stay private.
+# Two checks: (1) denylisted file paths, (2) private strings in the staged diff.
+# sample.db is allowed on purpose; reviews.db and friends are not.
+# Override only if you are certain what you are doing:  git commit --no-verify
+
+DENY_PATHS='^reviews\.db$|^reviews\.db-journal$|^products\.json$|^exports/|^docs/opportunity-.*\.md$|\.log$|^\.env'
+DENY_TEXT='klaviyo|omnisend|postscript|attentive|privy|sendlane|yotpo|smsbump|judge\.?me|mailchimp|brevo|/Users/|demerb987|@gmail'
+
+fail=0
+staged=$(git diff --cached --name-only)
+
+paths=$(printf '%s\n' "$staged" | grep -E "$DENY_PATHS" || true)
+if [ -n "$paths" ]; then
+  printf '\033[31m✗ COMMIT BLOCKED — private files staged (keep them local):\033[0m\n%s\n\n' "$paths"
+  fail=1
+fi
+
+# only inspect ADDED lines (drop the +++ b/file header line); skip .githooks/
+# itself, since these scripts legitimately contain the very patterns they match on
+added=$(git diff --cached -U0 --no-color -- . ':!.githooks' | grep -E '^\+' | grep -vE '^\+\+\+' || true)
+text=$(printf '%s\n' "$added" | grep -inE "$DENY_TEXT" || true)
+if [ -n "$text" ]; then
+  printf '\033[31m✗ COMMIT BLOCKED — private strings in staged changes (target app names / home path / email):\033[0m\n%s\n\n' "$text"
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf 'Unstage:  git restore --staged <file>\nOverride (careful):  git commit --no-verify\n'
+  exit 1
+fi
+exit 0

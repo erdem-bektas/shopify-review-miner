@@ -160,6 +160,11 @@ login is involved. Even so, use it responsibly:
 - Use this for research and product discovery, not for spamming, scraping
   personal data, or anything a review author wouldn't expect.
 
+This repo also ships git hooks (`.githooks/`) that refuse to commit or push
+private files (your `reviews.db`, `products.json`, `exports/`, personal notes) —
+a safety net against an accidental `git add -A`. Turn them on once per clone:
+`git config core.hooksPath .githooks`.
+
 ## Notes / lessons learned
 
 - Review pages are fully server-rendered; plain HTTP is enough — no headless
