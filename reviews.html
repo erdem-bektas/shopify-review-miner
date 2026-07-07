@@ -118,6 +118,7 @@
   .tag.pricing         { background: rgba(234,179,8,.20);  color: #d19b00; }
   .tag.praise          { background: rgba(34,197,94,.16);  color: #22c55e; }
   .tag.churn           { background: rgba(236,72,153,.18); color: #ec4899; }
+  .tag.ack             { background: rgba(139,92,246,.18); color: #8b5cf6; }
   .conf { font-size: 11px; color: var(--muted); }
   mark { background: rgba(129,140,248,.28); color: inherit; padding: 0 2px; border-radius: 3px; }
   /* churn flow */
@@ -217,7 +218,9 @@ let SQL = null, db = null, products = [], hasTags = false;
 // ---- opportunity scoring (mirror of opportunity_report.py) ----------------
 const OPP = { W: { frequency: 1, persistence: 1, seniority: 1, feature_shape: 1 },
   FREQ_SAT: 0.20, DATA_SPAN_YEARS: 11, RECENCY_MONTHS: 12, RECENCY_PENALTY: 0.40,
-  SENIORITY_SAT_YEARS: 3, PERSISTENCE_FLOOR: 0.15, SENIORITY_FLOOR: 0.20, MIN_FREQ: 2 };
+  SENIORITY_SAT_YEARS: 3, PERSISTENCE_FLOOR: 0.15, SENIORITY_FLOOR: 0.20, MIN_FREQ: 2,
+  TREND_RECENT_YEARS: 2, TREND_RATIO: 1.6, TREND_MIN_TAGS: 4 };
+const TREND_TR = { growing: "yükseliyor", stable: "sabit", fading: "sönüyor" };
 const FEATURE_KINDS = new Set(["feature_gap", "feature_request"]);
 const THEME_ORDER = ["deliverability", "flows_automation", "segmentation", "data_management",
   "templates_editor", "reporting_analytics", "integrations_sync", "sms", "forms_popups",
@@ -229,6 +232,8 @@ const THEME_TR = { deliverability: "Teslim edilebilirlik", flows_automation: "Ak
   onboarding_migration: "Kurulum / geçiş", performance_bugs: "Performans / hata", other: "Diğer" };
 const KIND_TR = { feature_gap: "özellik eksiği", feature_request: "özellik isteği",
   service: "hizmet", pricing: "fiyat", bug: "hata", praise: "övgü" };
+const ACK_TR = { acknowledged: "kabul edildi", roadmap: "yol haritasında",
+  shipped: "yayınlandı", disputed: "itiraz edildi" };
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -460,6 +465,35 @@ function geomean(parts) {
   return ws ? Math.pow(prod, 1 / ws) : 0;
 }
 
+// Mirrors trend_of() in opportunity_report.py — that Python function is the
+// normative definition (see docs/specs/radar-signal-robustness-design.md);
+// change both together.
+function trendOf(feat, appTags, currentYear) {
+  const appYears = {};                     // year -> Set(review_id)
+  for (const t of appTags) {
+    const m = /^(20\d\d)-/.exec(t.review_date || "");
+    if (m) (appYears[m[1]] ||= new Set()).add(t.review_id);
+  }
+  const featCount = {};
+  let total = 0;
+  for (const t of feat) {
+    const m = /^(20\d\d)-/.exec(t.review_date || "");
+    if (m) { featCount[m[1]] = (featCount[m[1]] || 0) + 1; total++; }
+  }
+  const years = Object.keys(appYears);
+  if (years.length < 3 || total < OPP.TREND_MIN_TAGS) return null;
+  const share = y => appYears[y] ? (featCount[y] || 0) / appYears[y].size : 0;
+  let recent = 0;
+  for (let i = 0; i < OPP.TREND_RECENT_YEARS; i++) recent += share(currentYear - i);
+  recent /= OPP.TREND_RECENT_YEARS;
+  const earlier = years.filter(y => Number(y) < currentYear - OPP.TREND_RECENT_YEARS + 1);
+  const base = earlier.length
+    ? earlier.reduce((acc, y) => acc + share(y), 0) / earlier.length : 0;
+  if (recent > 0 && (base === 0 || recent >= OPP.TREND_RATIO * base)) return "growing";
+  if (base > 0 && recent <= base / OPP.TREND_RATIO) return "fading";
+  return "stable";
+}
+
 function computeOpp() {
   const rows = q(`SELECT ${PRODUCT_EXPR} AS app, t.theme AS theme, t.kind AS kind,
       t.review_id AS review_id, r.review_date AS review_date, r.usage_duration AS usage_duration,
@@ -488,7 +522,8 @@ function computeOpp() {
       const featureShape = fsDenom ? feat.length / fsDenom : 0;
       const m = { theme, score: 0, frequency: 0, persistence: 0, seniority: 0,
         feature_shape: featureShape, n_feature_reviews: featReviews.size, n_tags: tt.length,
-        n_churn: tt.filter(t => t.churn_signal).length, first: null, last: null, avg_usage: 0 };
+        n_churn: tt.filter(t => t.churn_signal).length, first: null, last: null, avg_usage: 0,
+        trend: trendOf(feat, tags, today.getFullYear()) };
       if (featReviews.size >= OPP.MIN_FREQ && featureShape > 0) {
         const frequency = Math.min(1, (featReviews.size / tApp) / OPP.FREQ_SAT);
         const ds = feat.map(t => t.review_date).filter(d => /^20\d\d-/.test(d || "")).sort();
@@ -558,11 +593,13 @@ function renderHeatmap(scored) {
       const s = m ? m.score : 0;
       if (s > 0) {
         const alpha = 0.10 + 0.88 * (s / maxScore);
-        const cell = el("span", "cell", s.toFixed(0));
+        // ↑/↓ only — a stable arrow on every cell is noise
+        const arrow = { growing: "↑", fading: "↓" }[m.trend] || "";
+        const cell = el("span", "cell", s.toFixed(0) + arrow);
         cell.style.background = `rgba(99,102,241,${alpha.toFixed(3)})`;
         if (alpha > 0.55) cell.style.color = "#fff";
         if (state.oppSel && state.oppSel.app === app && state.oppSel.theme === th) cell.classList.add("sel");
-        cell.title = `${app} · ${THEME_TR[th] || th}\nskor ${s.toFixed(1)}\nsıklık ${m.frequency.toFixed(2)} · kalıcılık ${m.persistence.toFixed(2)} (${m.first}→${m.last}) · kıdem ${m.seniority.toFixed(2)} (~${m.avg_usage.toFixed(1)}y) · özellik-şekli ${m.feature_shape.toFixed(2)}\n${m.n_feature_reviews} özellik-şekilli yorum, ${m.n_churn} terk`;
+        cell.title = `${app} · ${THEME_TR[th] || th}\nskor ${s.toFixed(1)}${m.trend ? ` · eğilim: ${TREND_TR[m.trend]}` : ""}\nsıklık ${m.frequency.toFixed(2)} · kalıcılık ${m.persistence.toFixed(2)} (${m.first}→${m.last}) · kıdem ${m.seniority.toFixed(2)} (~${m.avg_usage.toFixed(1)}y) · özellik-şekli ${m.feature_shape.toFixed(2)}\n${m.n_feature_reviews} özellik-şekilli yorum, ${m.n_churn} terk`;
         cell.onclick = () => {
           state.oppSel = { app, theme: th };
           tbl.querySelectorAll(".cell.sel").forEach(x => x.classList.remove("sel"));
@@ -629,6 +666,8 @@ function oppCard(r, tags) {
   if (tags.some(t => t.churn_signal)) top.appendChild(el("span", "tag churn", "terk"));
   const sw = [...new Set(tags.map(t => t.switched_to).filter(Boolean))];
   if (sw.length) top.appendChild(el("span", "tag churn", "→ " + sw.join(", ")));
+  const acks = [...new Set(tags.map(t => t.vendor_ack).filter(a => a && a !== "none"))];
+  for (const a of acks) top.appendChild(el("span", "tag ack", "⚑ " + (ACK_TR[a] || a)));
   c.appendChild(top);
   const who = [r.shop_name, r.country, r.usage_duration].filter(Boolean).join(" · ");
   if (who) c.appendChild(el("div", "shopline", who));
@@ -651,7 +690,11 @@ function renderDrill(app, theme) {
   const box = $("drill"); box.replaceChildren();
   const slugs = slugsFor(app);
   const ph = slugs.map(() => "?").join(",");
+  // vendor_ack arrived later; older dbs (or sample.db) may not have the column
+  const hasAck = q(`SELECT COUNT(*) AS n FROM pragma_table_info('review_tags')
+    WHERE name = 'vendor_ack'`)[0].n > 0;
   const trows = q(`SELECT review_id, kind, churn_signal, switched_to, quote, confidence
+    ${hasAck ? ", vendor_ack" : ""}
     FROM review_tags WHERE theme = ? AND app_slug IN (${ph})`, [theme, ...slugs]);
   const tagsByRev = {};
   for (const t of trows) (tagsByRev[t.review_id] ||= []).push(t);
