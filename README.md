@@ -44,6 +44,13 @@ uv run scrape.py https://apps.shopify.com/some-app-slug
 
 # Resume an interrupted run — progress is tracked per (app, ratings-filter)
 uv run scrape.py some-app-slug --resume
+
+# Weekly refresh: walks newest-first, stops after 2 consecutive already-known
+# pages (needs one completed full scrape for the same filter first)
+uv run scrape.py some-app-slug --refresh
+
+# Did Shopify change their DOM? Live one-page selector check, no db writes
+uv run scrape.py some-app-slug --check
 ```
 
 Data is written to `reviews.db` (SQLite, git-ignored). Re-runs are safe and
@@ -96,12 +103,24 @@ uv run tag_reviews.py --import-batch batch.tags.json    # idempotent, resumable
 
 # progress + theme × kind distribution
 uv run tag_reviews.py --stats --app some-app-slug
+
+# or hands-off: export → `claude -p` (the rubric IS the prompt) → validated
+# import, looping until everything is tagged; failed batches are quarantined
+# to exports/quarantine/, never silently dropped
+uv run tag_reviews.py --auto -n 40 --claude-args "--model claude-haiku-4-5"
 ```
 
 `review_tags` fields: `theme` (14 controlled themes), `kind` (`feature_gap`,
 `feature_request`, `service`, `pricing`, `bug`, `praise`), `churn_signal`,
-`switched_to`, `quote` (≤200-char evidence quote), `confidence`. A review can be
-multi-theme → multiple rows.
+`switched_to`, `quote` (≤200-char evidence quote), `confidence`, `vendor_ack`
+(what the dev reply admits: `none/acknowledged/roadmap/shipped/disputed` —
+a years-old `roadmap` promise is gold, `shipped` is a staleness warning). A
+review can be multi-theme → multiple rows.
+
+`tag_reviews.py --discover` mines weakly-tagged reviews (all-`other` or
+all-low-confidence) for candidate themes the rubric might be missing →
+`exports/theme-candidates.md`. Report only; adopting a candidate is a manual
+rubric edit.
 
 ### Opportunity score
 
@@ -121,6 +140,41 @@ uv run opportunity_report.py --top 3               # highest + quotes
 Weights and thresholds live in the `CONFIG` block at the top of
 `opportunity_report.py`. The UI heatmap applies the exact same formula in JS
 (still serverless).
+
+Tables and heatmap cells carry a **trend arrow** (↑ growing · → stable ·
+↓ fading — yearly share of the theme, last 2 years vs. earlier);
+`--trend` prints the series behind the arrows. Quotes in `--top` carry
+`⚑ roadmap`-style markers when the dev reply acknowledged the gap.
+
+## The radar loop (continuous mode)
+
+After one full scrape + tagging pass, a periodic one-liner keeps the
+opportunity list fresh:
+
+```bash
+uv run scrape.py app-one app-two --refresh && \
+uv run tag_reviews.py --auto -n 40 && \
+uv run opportunity_report.py --snapshot --diff
+```
+
+- `--refresh` costs a couple of pages per unchanged app instead of a re-crawl.
+- `--auto` tags only what's new; interrupting it loses nothing.
+- `--snapshot --diff` reports new opportunities, risers/fallers and gone-quiet
+  themes against the previous snapshot (`--diff --json` for machines).
+- Occasionally run a plain full scrape (no `--refresh`) to pick up edits deep
+  in the listing, and `scrape.py --check` when a scrape looks off.
+
+## Tests
+
+```bash
+uv run tests/test_parse.py     # parsers vs synthetic DOM fixtures
+uv run tests/test_refresh.py   # delta-refresh logic (no network)
+uv run tests/test_trend.py     # trend classification (JS mirror matches)
+```
+
+Fixtures can't tell you Shopify changed their DOM — `scrape.py --check <slug>`
+is the live canary for that, and the scraper itself now aborts loudly instead
+of mistaking selector rot for the end of a listing.
 
 ## Alternative: Datasette
 
@@ -169,8 +223,8 @@ a safety net against an accidental `git add -A`. Turn them on once per clone:
 
 - Review pages are fully server-rendered; plain HTTP is enough — no headless
   browser needed.
-- Star-distribution counts are read from the unfiltered page; rounded values
-  (like "2.6K") are approximate.
+- Star-distribution counts come from the filter links' `aria-label`s, which
+  carry exact totals; the visible "2.6K"-style text is only the fallback.
 
 ## License
 

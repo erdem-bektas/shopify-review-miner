@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<!-- Synthetic fixture mirroring the app-store reviews page structure
+     (selector inventory: docs/specs/review-scraper-design.md). All names,
+     slugs, counts and texts are invented for tests. -->
+<html>
+<head>
+  <title>Reviews: Example App - Demo tagline for tests | Shopify App Store</title>
+</head>
+<body>
+<div id="ReviewsIndex" class="tw-font-sans">
+  <!-- star-distribution filter links, unfiltered-page form -->
+  <div id="filters">
+    <a class="tw-text-fg-primary tw-body-md" aria-label="1234 total reviews" href="/example-app/reviews?ratings%5B%5D=5">
+      <span class="link-block--underline"> 1.2K </span>
+    </a>
+    <a class="tw-text-fg-primary tw-body-md" href="/example-app/reviews?ratings%5B%5D=4">
+      <span class="link-block--underline"> 320 </span>
+    </a>
+    <a class="tw-text-fg-primary tw-body-md" href="/example-app/reviews?ratings%5B%5D=3">
+      <span class="link-block--underline"> 40 </span>
+    </a>
+    <a class="tw-text-fg-primary tw-body-md" href="/example-app/reviews?ratings%5B%5D=2">
+      <span class="link-block--underline"> 18 </span>
+    </a>
+    <a class="tw-text-fg-primary tw-body-md" href="/example-app/reviews?ratings%5B%5D=1">
+      <span class="link-block--underline"> 1,034 </span>
+    </a>
+    <!-- traps: pagination and combined-ratings links must NOT count -->
+    <a href="/example-app/reviews?ratings%5B%5D=1&amp;page=2"><span> 99 </span></a>
+    <a href="/example-app/reviews?ratings%5B%5D=1&amp;ratings%5B%5D=2"><span> 77 </span></a>
+  </div>
+
+  <!-- review 1: 5 stars, plain date, body, no usage div, EMPTY dev reply -->
+  <div id="review-1001" class="tw-relative">
+    <div data-merchant-review="" data-review-content-id="1001" class="tw-flex">
+      <div class="tw-order-2 lg:tw-col-span-3">
+        <div class="tw-flex tw-items-center">
+          <div class="tw-flex tw-relative" aria-label="5 out of 5 stars" role="img">
+            <svg></svg><svg></svg><svg></svg><svg></svg><svg></svg>
+          </div>
+          <div class="tw-text-body-xs tw-text-fg-tertiary">
+            July 7, 2026
+          </div>
+        </div>
+        <div class="tw-text-body-md tw-text-fg-secondary" data-truncate-review>
+          <div data-truncate-content-copy class="tw-mb-xs">
+            <p class="tw-break-words">Great app, campaigns are easy to build.</p>
+          </div>
+          <button name="button" type="submit" data-truncate-content-toggle="" class="tw-hidden">Show more</button>
+        </div>
+      </div>
+      <div class="tw-order-1 lg:tw-row-span-2 tw-text-fg-tertiary tw-text-body-xs">
+        <div class="tw-text-heading-xs tw-text-fg-primary">
+          <span class="tw-overflow-hidden" title="Demo Shop One"> Demo Shop One </span>
+          <button type="button" tabindex="0" data-review-share-link="/reviews/1001" data-review-id="1001" aria-label="Copy link to review" title="Copy link to review">
+            <span role="img" class="tw-w-md"><svg></svg></span>
+          </button>
+        </div>
+        <div>Australia</div>
+      </div>
+      <div class="tw-order-last tw-flex" data-merchant-review-reply>
+        <div class="tw-self-start tw-w-full "> </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- review 2: 1 star, Edited date, two-paragraph body, usage div, REAL dev reply -->
+  <div id="review-1002" class="tw-relative">
+    <div data-merchant-review="" data-review-content-id="1002" class="tw-flex">
+      <div class="tw-order-2 lg:tw-col-span-3">
+        <div class="tw-flex tw-items-center">
+          <div class="tw-flex tw-relative" aria-label="1 out of 5 stars" role="img">
+            <svg></svg>
+          </div>
+          <div class="tw-text-body-xs tw-text-fg-tertiary">
+            Edited September 9, 2023
+          </div>
+        </div>
+        <div class="tw-text-body-md tw-text-fg-secondary" data-truncate-review>
+          <div data-truncate-content-copy class="tw-mb-xs">
+            <p class="tw-break-words">Flows kept failing after the update.</p>
+            <p class="tw-break-words">Support never got back to us.</p>
+          </div>
+          <button name="button" type="submit" data-truncate-content-toggle="" class="tw-hidden">Show more</button>
+        </div>
+      </div>
+      <div class="tw-order-1 lg:tw-row-span-2 tw-text-fg-tertiary tw-text-body-xs">
+        <div class="tw-text-heading-xs tw-text-fg-primary">
+          <span class="tw-overflow-hidden" title="Luna Demo Store"> Luna Demo Store </span>
+          <button type="button" tabindex="0" data-review-share-link="/reviews/1002" data-review-id="1002" aria-label="Copy link to review" title="Copy link to review">
+            <span role="img" class="tw-w-md"><svg></svg></span>
+          </button>
+        </div>
+        <div>Hong Kong SAR</div>
+        <div>2 months using the app</div>
+      </div>
+      <div class="tw-order-last tw-flex" data-merchant-review-reply>
+        <div class="tw-self-start tw-w-full tw-mt-md"> </div>
+        <div class="tw-w-full tw-flex-grow">
+          <div id="review-reply-77" class="tw-border-l">
+            <div class="tw-ml-md">
+              <div>
+                <!-- same classes as the date div: a select_one ordering trap -->
+                <div class="tw-text-body-xs tw-text-fg-tertiary tw-mb-sm">
+                  DemoVendor replied September 12, 2023
+                </div>
+              </div>
+              <div class="tw-text-body-sm tw-text-fg-tertiary" data-reply-id="77" data-truncate-review="175">
+                <div class="tw-space-y-md" data-truncate-content-copy>
+                  <p>Sorry to hear that — our team will reach out.</p>
+                </div>
+                <button name="button" type="submit" data-truncate-content-toggle="" class="tw-hidden">Show more</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- review 3: 4 stars, rating-only review (empty body paragraph), usage div -->
+  <div id="review-1003" class="tw-relative">
+    <div data-merchant-review="" data-review-content-id="1003" class="tw-flex">
+      <div class="tw-order-2 lg:tw-col-span-3">
+        <div class="tw-flex tw-items-center">
+          <div class="tw-flex tw-relative" aria-label="4 out of 5 stars" role="img">
+            <svg></svg><svg></svg><svg></svg><svg></svg>
+          </div>
+          <div class="tw-text-body-xs tw-text-fg-tertiary">
+            March 2, 2024
+          </div>
+        </div>
+        <div class="tw-text-body-md tw-text-fg-secondary" data-truncate-review>
+          <div data-truncate-content-copy class="tw-mb-xs">
+            <p class="tw-break-words"></p>
+          </div>
+          <button name="button" type="submit" data-truncate-content-toggle="" class="tw-hidden">Show more</button>
+        </div>
+      </div>
+      <div class="tw-order-1 lg:tw-row-span-2 tw-text-fg-tertiary tw-text-body-xs">
+        <div class="tw-text-heading-xs tw-text-fg-primary">
+          <span class="tw-overflow-hidden" title="Third Demo"> Third Demo </span>
+          <button type="button" tabindex="0" data-review-share-link="/reviews/1003" data-review-id="1003" aria-label="Copy link to review" title="Copy link to review">
+            <span role="img" class="tw-w-md"><svg></svg></span>
+          </button>
+        </div>
+        <div>Türkiye</div>
+        <div>Over 2 years using the app</div>
+      </div>
+      <div class="tw-order-last tw-flex" data-merchant-review-reply>
+        <div class="tw-self-start tw-w-full "> </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- broken block: counted in n_blocks, skipped in output with a warning -->
+  <div id="review-9999" class="tw-relative">
+    <div data-merchant-review="" data-review-content-id="9999" class="tw-flex"> </div>
+  </div>
+</div>
+</body>
+</html>

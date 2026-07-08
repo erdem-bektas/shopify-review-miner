@@ -39,6 +39,7 @@ the pipeline can tell "tagged, nothing actionable" from "not yet tagged".
 | `switched_to` | competitor name or `null` | only if a rival is named |
 | `quote` | ≤200 chars, **verbatim** substring | the evidence for THIS claim |
 | `confidence` | `high`/`medium`/`low` | low when unsure — never fabricate |
+| `vendor_ack` | vocab below | what the `dev_reply` says about THIS claim |
 
 ## `theme` — controlled vocabulary (email/SMS marketing domain)
 
@@ -115,6 +116,23 @@ it. When both are present, prefer `feature_request` (explicit signal is stronger
    a `switched_to`. The quote must be an actual substring of the review body
    (or of `dev_reply`, prefixed `[dev]: `).
 
+## `vendor_ack` — what the dev reply admits
+
+Judged **per tag**, from `dev_reply` only. A reply that addresses one claim but
+ignores another gets different values on the two tags.
+
+| value | meaning |
+|-------|---------|
+| `none` | no dev reply, or the reply doesn't address this claim (generic apology, "contact support") |
+| `acknowledged` | the reply admits the limitation/problem but commits to nothing |
+| `roadmap` | the reply says it's planned / being worked on / coming — the strongest open-gap evidence |
+| `shipped` | the reply says the capability now exists or was released — the gap may be closed (staleness warning) |
+| `disputed` | the reply claims the feature already exists or the reviewer erred |
+
+Always emit the field. Combine with special rule 4 (stale promises): an old
+review with `vendor_ack: roadmap` and no later `shipped` evidence is a
+years-unfulfilled promise.
+
 ## `quote` rules
 
 - Verbatim substring, ≤200 chars, the single most evidence-bearing fragment for
@@ -136,7 +154,7 @@ A JSON array (or `{"tags": [...]}`) of tag objects:
 {"review_id": "...", "source": "shopify", "app_slug": "some-app-slug",
  "theme": "segmentation", "kind": "feature_request", "churn_signal": false,
  "switched_to": null, "quote": "would be amazing if segments could nest AND/OR",
- "confidence": "high"}
+ "confidence": "high", "vendor_ack": "none"}
 ```
 
 Every `review_id` in the batch must appear in ≥1 tag. Omit no review.

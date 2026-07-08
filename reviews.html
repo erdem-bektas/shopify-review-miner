@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Yorum Tarayıcı</title>
+<title>Review Explorer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
 <style>
   :root {
@@ -118,6 +118,7 @@
   .tag.pricing         { background: rgba(234,179,8,.20);  color: #d19b00; }
   .tag.praise          { background: rgba(34,197,94,.16);  color: #22c55e; }
   .tag.churn           { background: rgba(236,72,153,.18); color: #ec4899; }
+  .tag.ack             { background: rgba(139,92,246,.18); color: #8b5cf6; }
   .conf { font-size: 11px; color: var(--muted); }
   mark { background: rgba(129,140,248,.28); color: inherit; padding: 0 2px; border-radius: 3px; }
   /* churn flow */
@@ -136,10 +137,10 @@
 <body>
 
 <div id="loader">
-  <h2>💬 Yorum Tarayıcı</h2>
-  <p>Tamamen tarayıcıda çalışır — sunucu yok. <code>reviews.db</code> dosyanı seç, gerisi burada.</p>
+  <h2>💬 Review Explorer</h2>
+  <p>Runs entirely in your browser — no server. Pick your <code>reviews.db</code> file and everything happens here.</p>
   <div id="drop">
-    <p style="margin:0"><strong>reviews.db</strong> dosyasını buraya sürükle<br>ya da tıklayıp seç</p>
+    <p style="margin:0">Drag your <strong>reviews.db</strong> file here<br>or click to choose</p>
   </div>
   <input id="file" type="file" accept=".db,.sqlite,.sqlite3" class="hide">
   <p id="loaderr" style="color:#dc2626"></p>
@@ -149,23 +150,23 @@
   <div class="row">
     <h1>💬 <span id="count"></span></h1>
     <div class="tabs">
-      <button class="tab on" id="tab-list" data-tab="list">Yorumlar</button>
-      <button class="tab" id="tab-opp" data-tab="opp">Fırsatlar</button>
+      <button class="tab on" id="tab-list" data-tab="list">Reviews</button>
+      <button class="tab" id="tab-opp" data-tab="opp">Opportunities</button>
     </div>
     <span style="flex:1"></span>
-    <button id="reload" class="btn" title="Güncel reviews.db'yi yeniden yükle">⟳ DB</button>
+    <button id="reload" class="btn" title="Reload the latest reviews.db">⟳ DB</button>
   </div>
   <div id="listControls">
     <div class="row" style="margin-top:10px">
-      <label class="date" for="source">Kaynak</label>
-      <select id="source"><option value="">Tümü</option></select>
+      <label class="date" for="source">Source</label>
+      <select id="source"><option value="">All</option></select>
       <select id="sort">
-        <option value="newest">En yeni</option>
-        <option value="oldest">En eski</option>
-        <option value="rating_asc">Puan (artan)</option>
-        <option value="rating_desc">Puan (azalan)</option>
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="rating_asc">Rating (low→high)</option>
+        <option value="rating_desc">Rating (high→low)</option>
       </select>
-      <input id="q" type="search" placeholder="Yorumlarda ara… (ör. pricing, support)">
+      <input id="q" type="search" placeholder="Search reviews… (e.g. pricing, support)">
     </div>
     <div class="chips" id="products"></div>
     <div class="chips" id="stars"></div>
@@ -176,22 +177,22 @@
 
 <main id="mainbox" class="hide">
   <div id="list"></div>
-  <button id="more" hidden>Daha fazla yükle</button>
+  <button id="more" hidden>Load more</button>
 </main>
 
 <main id="oppbox" class="hide">
   <div class="opp-intro" id="oppIntro"></div>
   <div id="oppMsg" class="opp-hint hide"></div>
   <div id="heatSection">
-    <div class="sec-title">Isı haritası <small>satır = tema · sütun = uygulama · hücre = fırsat skoru (0–100)</small></div>
+    <div class="sec-title">Heatmap <small>row = theme · column = app · cell = opportunity score (0–100)</small></div>
     <div class="heat-wrap"><table class="heat" id="heatTable"></table></div>
   </div>
   <div id="drillSection">
-    <div class="sec-title" id="drillTitle">Detay</div>
-    <div id="drill"><div class="opp-hint">Bir hücreye tıkla → o tema + uygulamanın yorumları, alıntılar vurgulu.</div></div>
+    <div class="sec-title" id="drillTitle">Detail</div>
+    <div id="drill"><div class="opp-hint">Click a cell → reviews for that theme + app, with quotes highlighted.</div></div>
   </div>
   <div id="churnSection">
-    <div class="sec-title">Terk sinyalleri <small>kim, kime, neden</small></div>
+    <div class="sec-title">Churn signals <small>who, to whom, why</small></div>
     <div class="flow" id="churnFlow"></div>
   </div>
 </main>
@@ -217,18 +218,22 @@ let SQL = null, db = null, products = [], hasTags = false;
 // ---- opportunity scoring (mirror of opportunity_report.py) ----------------
 const OPP = { W: { frequency: 1, persistence: 1, seniority: 1, feature_shape: 1 },
   FREQ_SAT: 0.20, DATA_SPAN_YEARS: 11, RECENCY_MONTHS: 12, RECENCY_PENALTY: 0.40,
-  SENIORITY_SAT_YEARS: 3, PERSISTENCE_FLOOR: 0.15, SENIORITY_FLOOR: 0.20, MIN_FREQ: 2 };
+  SENIORITY_SAT_YEARS: 3, PERSISTENCE_FLOOR: 0.15, SENIORITY_FLOOR: 0.20, MIN_FREQ: 2,
+  TREND_RECENT_YEARS: 2, TREND_RATIO: 1.6, TREND_MIN_TAGS: 4 };
+const TREND_LABEL = { growing: "growing", stable: "stable", fading: "fading" };
 const FEATURE_KINDS = new Set(["feature_gap", "feature_request"]);
 const THEME_ORDER = ["deliverability", "flows_automation", "segmentation", "data_management",
   "templates_editor", "reporting_analytics", "integrations_sync", "sms", "forms_popups",
   "pricing_billing", "support", "onboarding_migration", "performance_bugs", "other"];
-const THEME_TR = { deliverability: "Teslim edilebilirlik", flows_automation: "Akışlar / otomasyon",
-  segmentation: "Segmentasyon", data_management: "Veri yönetimi", templates_editor: "Şablon / editör",
-  reporting_analytics: "Raporlama", integrations_sync: "Entegrasyon / senk.", sms: "SMS",
-  forms_popups: "Form / popup", pricing_billing: "Fiyat / faturalama", support: "Destek",
-  onboarding_migration: "Kurulum / geçiş", performance_bugs: "Performans / hata", other: "Diğer" };
-const KIND_TR = { feature_gap: "özellik eksiği", feature_request: "özellik isteği",
-  service: "hizmet", pricing: "fiyat", bug: "hata", praise: "övgü" };
+const THEME_LABEL = { deliverability: "Deliverability", flows_automation: "Flows / automation",
+  segmentation: "Segmentation", data_management: "Data management", templates_editor: "Templates / editor",
+  reporting_analytics: "Reporting", integrations_sync: "Integrations / sync", sms: "SMS",
+  forms_popups: "Forms / popups", pricing_billing: "Pricing / billing", support: "Support",
+  onboarding_migration: "Onboarding / migration", performance_bugs: "Performance / bugs", other: "Other" };
+const KIND_LABEL = { feature_gap: "feature gap", feature_request: "feature request",
+  service: "service", pricing: "pricing", bug: "bug", praise: "praise" };
+const ACK_LABEL = { acknowledged: "acknowledged", roadmap: "on roadmap",
+  shipped: "shipped", disputed: "disputed" };
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -267,7 +272,7 @@ function loadDb(buf) {
     next.prepare("SELECT 1 FROM reviews LIMIT 1").free();  // sanity check
   } catch (e) {
     next?.close();  // don't leak the WASM db handle on a bad file
-    const msg = "Bu dosya bir reviews.db değil gibi görünüyor.";
+    const msg = "This file doesn't look like a reviews.db.";
     $("loaderr").textContent = msg;                          // for the first-load screen
     if ($("loader").classList.contains("hide")) alert(msg);  // ⟳ DB after a good load
     return;
@@ -288,7 +293,7 @@ function loadDb(buf) {
 function loadFilters() {
   const sources = q(`SELECT r.source AS id, COUNT(*) AS n ${JOIN} GROUP BY r.source ORDER BY n DESC`);
   const sel = $("source");
-  sel.replaceChildren(Object.assign(el("option"), { value: "", textContent: "Tümü" }));
+  sel.replaceChildren(Object.assign(el("option"), { value: "", textContent: "All" }));
   for (const s of sources) {
     const o = el("option", "", `${SOURCE_LABELS[s.id] || s.id} (${fmt(s.n)})`);
     o.value = s.id;
@@ -311,14 +316,14 @@ function renderTagChips() {
   for (const th of THEME_ORDER) {
     if (!cmap[th]) continue;
     const c = el("span", "chip" + (state.themes.has(th) ? " on" : ""));
-    c.append(THEME_TR[th] || th, Object.assign(el("small"), { textContent: fmt(cmap[th]) }));
+    c.append(THEME_LABEL[th] || th, Object.assign(el("small"), { textContent: fmt(cmap[th]) }));
     c.onclick = () => { const on = state.themes.has(th); on ? state.themes.delete(th) : state.themes.add(th); c.classList.toggle("on", !on); refresh(); };
     themeBox.appendChild(c);
   }
   for (const k of ["feature_gap", "feature_request", "bug", "service", "pricing", "praise"]) {
     if (!kmap[k]) continue;
     const c = el("span", "chip" + (state.kinds.has(k) ? " on" : ""));
-    c.append(KIND_TR[k] || k, Object.assign(el("small"), { textContent: fmt(kmap[k]) }));
+    c.append(KIND_LABEL[k] || k, Object.assign(el("small"), { textContent: fmt(kmap[k]) }));
     c.onclick = () => { const on = state.kinds.has(k); on ? state.kinds.delete(k) : state.kinds.add(k); c.classList.toggle("on", !on); refresh(); };
     kindBox.appendChild(c);
   }
@@ -327,7 +332,7 @@ function renderTagChips() {
 function renderProductChips() {
   const box = $("products");
   box.replaceChildren();
-  const all = el("span", "chip" + (state.product ? "" : " on"), "Tüm ürünler");
+  const all = el("span", "chip" + (state.product ? "" : " on"), "All products");
   all.onclick = () => { state.product = ""; refresh(); };
   box.appendChild(all);
   for (const p of products) {
@@ -403,18 +408,18 @@ function card(r) {
   const top = el("div", "card-top");
   top.appendChild(starRow(r.rating));
   top.appendChild(el("span", "date", r.review_date || ""));
-  if (r.edited) top.appendChild(el("span", "badge edited", "düzenlendi"));
+  if (r.edited) top.appendChild(el("span", "badge edited", "edited"));
   top.appendChild(el("span", "badge", r.product || r.app_slug));
   top.appendChild(el("span", "badge src", SOURCE_LABELS[r.source] || r.source));
   c.appendChild(top);
 
   const who = [r.shop_name, r.country, r.usage_duration].filter(Boolean).join(" · ");
   if (who) c.appendChild(el("div", "shopline", who));
-  c.appendChild(el("div", "body", r.body || "(metin yok)"));
+  c.appendChild(el("div", "body", r.body || "(no text)"));
 
   if (r.dev_reply) {
     const d = el("details", "reply");
-    d.appendChild(el("summary", "", "Geliştirici yanıtı"));
+    d.appendChild(el("summary", "", "Developer reply"));
     d.appendChild(el("div", "", r.dev_reply));
     c.appendChild(d);
   }
@@ -427,8 +432,8 @@ function refresh(append = false) {
   if (!append) $("list").replaceChildren();
   for (const r of d.items) $("list").appendChild(card(r));
   if (!append && d.items.length === 0)
-    $("list").appendChild(el("div", "empty", "Bu filtrelerle yorum bulunamadı."));
-  $("count").textContent = `· ${fmt(d.total)} yorum`;
+    $("list").appendChild(el("div", "empty", "No reviews match these filters."));
+  $("count").textContent = `· ${fmt(d.total)} reviews`;
   renderStarChips(d.star_counts || {});
   renderProductChips();
   state.shown = state.offset + d.items.length;
@@ -460,6 +465,35 @@ function geomean(parts) {
   return ws ? Math.pow(prod, 1 / ws) : 0;
 }
 
+// Mirrors trend_of() in opportunity_report.py — that Python function is the
+// normative definition (see docs/specs/radar-signal-robustness-design.md);
+// change both together.
+function trendOf(feat, appTags, currentYear) {
+  const appYears = {};                     // year -> Set(review_id)
+  for (const t of appTags) {
+    const m = /^(20\d\d)-/.exec(t.review_date || "");
+    if (m) (appYears[m[1]] ||= new Set()).add(t.review_id);
+  }
+  const featCount = {};
+  let total = 0;
+  for (const t of feat) {
+    const m = /^(20\d\d)-/.exec(t.review_date || "");
+    if (m) { featCount[m[1]] = (featCount[m[1]] || 0) + 1; total++; }
+  }
+  const years = Object.keys(appYears);
+  if (years.length < 3 || total < OPP.TREND_MIN_TAGS) return null;
+  const share = y => appYears[y] ? (featCount[y] || 0) / appYears[y].size : 0;
+  let recent = 0;
+  for (let i = 0; i < OPP.TREND_RECENT_YEARS; i++) recent += share(currentYear - i);
+  recent /= OPP.TREND_RECENT_YEARS;
+  const earlier = years.filter(y => Number(y) < currentYear - OPP.TREND_RECENT_YEARS + 1);
+  const base = earlier.length
+    ? earlier.reduce((acc, y) => acc + share(y), 0) / earlier.length : 0;
+  if (recent > 0 && (base === 0 || recent >= OPP.TREND_RATIO * base)) return "growing";
+  if (base > 0 && recent <= base / OPP.TREND_RATIO) return "fading";
+  return "stable";
+}
+
 function computeOpp() {
   const rows = q(`SELECT ${PRODUCT_EXPR} AS app, t.theme AS theme, t.kind AS kind,
       t.review_id AS review_id, r.review_date AS review_date, r.usage_duration AS usage_duration,
@@ -488,7 +522,8 @@ function computeOpp() {
       const featureShape = fsDenom ? feat.length / fsDenom : 0;
       const m = { theme, score: 0, frequency: 0, persistence: 0, seniority: 0,
         feature_shape: featureShape, n_feature_reviews: featReviews.size, n_tags: tt.length,
-        n_churn: tt.filter(t => t.churn_signal).length, first: null, last: null, avg_usage: 0 };
+        n_churn: tt.filter(t => t.churn_signal).length, first: null, last: null, avg_usage: 0,
+        trend: trendOf(feat, tags, today.getFullYear()) };
       if (featReviews.size >= OPP.MIN_FREQ && featureShape > 0) {
         const frequency = Math.min(1, (featReviews.size / tApp) / OPP.FREQ_SAT);
         const ds = feat.map(t => t.review_date).filter(d => /^20\d\d-/.test(d || "")).sort();
@@ -520,16 +555,16 @@ function renderOpp() {
   ["heatSection", "drillSection", "churnSection"].forEach(id => $(id).classList.toggle("hide", !hasTags));
   if (!hasTags) {
     $("oppIntro").textContent = "";
-    const p = el("div", "", "Henüz etiket yok — önce etiketlemeyi çalıştır:");
+    const p = el("div", "", "No tags yet — run tagging first:");
     const c1 = el("div"); c1.style.marginTop = "8px";
     c1.appendChild(Object.assign(el("code"), { textContent: "uv run tag_reviews.py --export --app some-app-slug -n 200 --out b.json" }));
     const c2 = el("div"); c2.style.marginTop = "6px";
-    c2.appendChild(Object.assign(el("code"), { textContent: "# etiketle → uv run tag_reviews.py --import-batch b.tags.json → ⟳ DB" }));
+    c2.appendChild(Object.assign(el("code"), { textContent: "# tag → uv run tag_reviews.py --import-batch b.tags.json → ⟳ DB" }));
     $("oppMsg").replaceChildren(p, c1, c2);
     return;
   }
-  $("oppIntro").textContent = "Fırsat skoru = sıklık × kalıcılık × kıdem × özellik-şekillilik. "
-    + "Destek/fiyat gibi ‘ürünleşmeyen’ temalar 0’a düşer; öne çıkanlar özellik-şekilli boşluklar.";
+  $("oppIntro").textContent = "Opportunity score = frequency × persistence × seniority × feature-shapedness. "
+    + "Themes that don’t ‘productize’ (support/pricing) drop to 0; what stands out are feature-shaped gaps.";
   renderHeatmap(computeOpp());
   renderChurn();
   if (state.oppSel) renderDrill(state.oppSel.app, state.oppSel.theme);
@@ -545,24 +580,26 @@ function renderHeatmap(scored) {
   const maxScore = Math.max(1, ...Object.values(themeMax));
   const tbl = $("heatTable"); tbl.replaceChildren();
   const htr = el("tr");
-  htr.appendChild(Object.assign(el("th", "rowhdr corner"), { textContent: "tema \\ uygulama" }));
+  htr.appendChild(Object.assign(el("th", "rowhdr corner"), { textContent: "theme \\ app" }));
   for (const app of apps) htr.appendChild(Object.assign(el("th"), { textContent: app }));
   const thead = el("thead"); thead.appendChild(htr); tbl.appendChild(thead);
   const tbody = el("tbody");
   for (const th of themes) {
     const tr = el("tr");
-    tr.appendChild(Object.assign(el("th", "rowhdr"), { textContent: THEME_TR[th] || th }));
+    tr.appendChild(Object.assign(el("th", "rowhdr"), { textContent: THEME_LABEL[th] || th }));
     for (const app of apps) {
       const td = el("td");
       const m = scored[app].themes[th];
       const s = m ? m.score : 0;
       if (s > 0) {
         const alpha = 0.10 + 0.88 * (s / maxScore);
-        const cell = el("span", "cell", s.toFixed(0));
+        // ↑/↓ only — a stable arrow on every cell is noise
+        const arrow = { growing: "↑", fading: "↓" }[m.trend] || "";
+        const cell = el("span", "cell", s.toFixed(0) + arrow);
         cell.style.background = `rgba(99,102,241,${alpha.toFixed(3)})`;
         if (alpha > 0.55) cell.style.color = "#fff";
         if (state.oppSel && state.oppSel.app === app && state.oppSel.theme === th) cell.classList.add("sel");
-        cell.title = `${app} · ${THEME_TR[th] || th}\nskor ${s.toFixed(1)}\nsıklık ${m.frequency.toFixed(2)} · kalıcılık ${m.persistence.toFixed(2)} (${m.first}→${m.last}) · kıdem ${m.seniority.toFixed(2)} (~${m.avg_usage.toFixed(1)}y) · özellik-şekli ${m.feature_shape.toFixed(2)}\n${m.n_feature_reviews} özellik-şekilli yorum, ${m.n_churn} terk`;
+        cell.title = `${app} · ${THEME_LABEL[th] || th}\nscore ${s.toFixed(1)}${m.trend ? ` · trend: ${TREND_LABEL[m.trend]}` : ""}\nfrequency ${m.frequency.toFixed(2)} · persistence ${m.persistence.toFixed(2)} (${m.first}→${m.last}) · seniority ${m.seniority.toFixed(2)} (~${m.avg_usage.toFixed(1)}y) · feature-shape ${m.feature_shape.toFixed(2)}\n${m.n_feature_reviews} feature-shaped reviews, ${m.n_churn} churn`;
         cell.onclick = () => {
           state.oppSel = { app, theme: th };
           tbl.querySelectorAll(".cell.sel").forEach(x => x.classList.remove("sel"));
@@ -623,12 +660,14 @@ function oppCard(r, tags) {
   const top = el("div", "card-top");
   top.appendChild(starRow(r.rating));
   top.appendChild(el("span", "date", r.review_date || ""));
-  if (r.edited) top.appendChild(el("span", "badge edited", "düzenlendi"));
+  if (r.edited) top.appendChild(el("span", "badge edited", "edited"));
   top.appendChild(el("span", "badge", r.product || r.app_slug));
-  for (const k of [...new Set(tags.map(t => t.kind))]) top.appendChild(el("span", "tag " + k, KIND_TR[k] || k));
-  if (tags.some(t => t.churn_signal)) top.appendChild(el("span", "tag churn", "terk"));
+  for (const k of [...new Set(tags.map(t => t.kind))]) top.appendChild(el("span", "tag " + k, KIND_LABEL[k] || k));
+  if (tags.some(t => t.churn_signal)) top.appendChild(el("span", "tag churn", "churn"));
   const sw = [...new Set(tags.map(t => t.switched_to).filter(Boolean))];
   if (sw.length) top.appendChild(el("span", "tag churn", "→ " + sw.join(", ")));
+  const acks = [...new Set(tags.map(t => t.vendor_ack).filter(a => a && a !== "none"))];
+  for (const a of acks) top.appendChild(el("span", "tag ack", "⚑ " + (ACK_LABEL[a] || a)));
   c.appendChild(top);
   const who = [r.shop_name, r.country, r.usage_duration].filter(Boolean).join(" · ");
   if (who) c.appendChild(el("div", "shopline", who));
@@ -637,7 +676,7 @@ function oppCard(r, tags) {
   c.appendChild(bodyEl);
   if (r.dev_reply) {
     const d = el("details", "reply");
-    d.appendChild(el("summary", "", "Geliştirici yanıtı"));
+    d.appendChild(el("summary", "", "Developer reply"));
     const dd = el("div");
     dd.appendChild(buildHighlighted(r.dev_reply, tags.map(t => t.quote).filter(x => /^\[dev\]/i.test(x || ""))));
     d.appendChild(dd);
@@ -647,24 +686,28 @@ function oppCard(r, tags) {
 }
 
 function renderDrill(app, theme) {
-  $("drillTitle").textContent = `${app} · ${THEME_TR[theme] || theme}`;
+  $("drillTitle").textContent = `${app} · ${THEME_LABEL[theme] || theme}`;
   const box = $("drill"); box.replaceChildren();
   const slugs = slugsFor(app);
   const ph = slugs.map(() => "?").join(",");
+  // vendor_ack arrived later; older dbs (or sample.db) may not have the column
+  const hasAck = q(`SELECT COUNT(*) AS n FROM pragma_table_info('review_tags')
+    WHERE name = 'vendor_ack'`)[0].n > 0;
   const trows = q(`SELECT review_id, kind, churn_signal, switched_to, quote, confidence
+    ${hasAck ? ", vendor_ack" : ""}
     FROM review_tags WHERE theme = ? AND app_slug IN (${ph})`, [theme, ...slugs]);
   const tagsByRev = {};
   for (const t of trows) (tagsByRev[t.review_id] ||= []).push(t);
   const ids = Object.keys(tagsByRev);
-  if (!ids.length) { box.appendChild(el("div", "opp-hint", "Yorum yok.")); return; }
+  if (!ids.length) { box.appendChild(el("div", "opp-hint", "No reviews.")); return; }
   const idPh = ids.map(() => "?").join(",");
   const revs = q(`SELECT r.*, a.product AS product FROM reviews r
     LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug
     WHERE r.app_slug IN (${ph}) AND r.review_id IN (${idPh})
     ORDER BY r.review_date DESC`, [...slugs, ...ids]);
   box.appendChild(el("div", "metricline",
-    `${revs.length} yorum · ${trows.filter(t => FEATURE_KINDS.has(t.kind)).length} özellik-şekilli etiket · `
-    + `${trows.filter(t => t.churn_signal).length} terk sinyali`));
+    `${revs.length} reviews · ${trows.filter(t => FEATURE_KINDS.has(t.kind)).length} feature-shaped tags · `
+    + `${trows.filter(t => t.churn_signal).length} churn signals`));
   for (const r of revs) box.appendChild(oppCard(r, tagsByRev[r.review_id] || []));
 }
 
@@ -675,7 +718,7 @@ function renderChurn() {
     JOIN reviews r ON r.source = t.source AND r.app_slug = t.app_slug AND r.review_id = t.review_id
     LEFT JOIN apps a ON a.source = r.source AND a.app_slug = r.app_slug
     WHERE t.churn_signal = 1`);
-  if (!rows.length) { box.appendChild(el("div", "opp-hint", "Terk sinyali yok.")); return; }
+  if (!rows.length) { box.appendChild(el("div", "opp-hint", "No churn signals.")); return; }
   const named = {}, unnamed = {};
   for (const r of rows) {
     if (r.dest) (named[r.app + " → " + r.dest] ||= []).push(r);
@@ -695,7 +738,7 @@ function renderChurn() {
   };
   Object.entries(named).sort((a, b) => b[1].length - a[1].length).forEach(([k, rs]) => dest(k, true, rs));
   Object.entries(unnamed).sort((a, b) => b[1].length - a[1].length)
-    .forEach(([app, rs]) => dest(app + " → (belirtilmemiş)", false, rs));
+    .forEach(([app, rs]) => dest(app + " → (unspecified)", false, rs));
 }
 
 // ---- wiring -------------------------------------------------------------

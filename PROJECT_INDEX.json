@@ -1,0 +1,89 @@
+{
+  "project": "shopify-review-miner",
+  "generated": "2026-07-07",
+  "description": "Scrape Shopify App Store reviews into SQLite, browse via a serverless sql.js UI, and run a continuous opportunity radar: delta refresh -> claude -p auto-tagging -> snapshot diffs of unbundling scores.",
+  "language": "Python 3.11+ (PEP 723 single-file scripts, run with uv) + vanilla JS/HTML UI",
+  "runner": "uv run <script>.py",
+  "radar_cadence": "scrape.py <slugs> --refresh && tag_reviews.py --auto -n 40 && opportunity_report.py --snapshot --diff",
+  "entry_points": [
+    {
+      "path": "scrape.py",
+      "purpose": "Scrape review pages into reviews.db; polite (delay>=3s, backoff), incremental (COALESCE upsert), resumable",
+      "deps": ["requests", "beautifulsoup4"],
+      "cli": {
+        "positional": "app slugs or apps.shopify.com URLs",
+        "flags": ["--ratings 1,2,3", "--delay 3.0", "--db reviews.db", "--max-pages 2000", "--resume", "--refresh", "--stop-after-known 2", "--check"]
+      },
+      "modes": {
+        "full": "walks every page, tracks scrape_progress, marks completed",
+        "refresh": "delta: newest-first, early-stops after K consecutive all-known pages; requires completed baseline per (app, ratings_key); never writes scrape_progress; prints +new/~updated summary",
+        "check": "live one-page canary: per-selector pass/fail table, exit 1 on failure, no db writes"
+      },
+      "dom_rot_guards": "plausible_listing_end(page, expected): 0-block page only accepted as listing end when (page-1)*10 >= 0.7*expected; blocks-but-none-parsed always aborts; star counts exact via link aria-labels",
+      "key_functions": ["ensure_schema", "fetch", "parse_star_distribution", "app_name_from_title", "plausible_listing_end", "_review_changed", "parse_reviews", "scrape_app", "check_app"]
+    },
+    {
+      "path": "tag_reviews.py",
+      "purpose": "Tagging plumbing + automation. Rubric (docs/tagging-rubric.md) is the single source of truth and IS the --auto prompt",
+      "deps": [],
+      "cli": {
+        "flags": ["--export", "--import-batch FILE", "--auto", "--discover", "--stats", "--app SLUG", "-n N", "--stratified", "--seed K", "--out FILE", "--max-batches 40", "--dry-run", "--claude-args ARGS", "--db FILE"]
+      },
+      "auto_mode": "loop: fetch_untagged -> claude -p (rubric+contract+batch JSON) -> validate_tags -> import_rows; 1 retry with errors appended, then quarantine batch+response to exports/quarantine/ and skip those ids for the run",
+      "discover_mode": "reviews tagged only-'other' or only-low-confidence -> candidate new themes (NOT in THEMES) -> merge pass -> exports/theme-candidates.md; never touches db/THEMES",
+      "key_functions": ["ensure_schema (vendor_ack migration)", "fetch_untagged", "stratified_sample", "validate_tags", "import_rows", "run_claude", "cmd_auto", "cmd_discover", "cmd_stats"]
+    },
+    {
+      "path": "opportunity_report.py",
+      "purpose": "Score (app, theme): 100 x weighted geomean(frequency, persistence, seniority, feature_shape); trend arrows; snapshot diffs",
+      "deps": [],
+      "cli": {
+        "flags": ["--app SLUG", "--heatmap", "--top N", "--trend", "--json", "--snapshot", "--diff [OLD NEW]", "--db FILE"]
+      },
+      "key_functions": ["load", "score_apps", "trend_of (NORMATIVE for JS mirror)", "print_tables", "print_heatmap", "print_top", "print_trend", "cmd_snapshot", "cmd_diff"],
+      "config_constants": ["WEIGHTS", "FREQ_SAT=0.20", "DATA_SPAN_YEARS=11.0", "DIFF_MIN_SCORE=25.0", "DIFF_MIN_DELTA=10.0", "TREND_RECENT_YEARS=2", "TREND_RATIO=1.6", "TREND_MIN_TAGS=4"]
+    },
+    {
+      "path": "export_md.py",
+      "purpose": "Export reviews.db to per-app markdown grouped by star rating",
+      "deps": [],
+      "cli": {"flags": ["--apps SLUG...", "--ratings 1,2,3", "--out exports", "--db FILE"]}
+    },
+    {
+      "path": "reviews.html",
+      "purpose": "Serverless UI (Turkish labels): review browser + opportunity heatmap with trend arrows, drill-down with vendor_ack badges, churn flows. computeOpp/trendOf mirror the Python formulas — change both together",
+      "vendor": ["web/vendor/sql-wasm.js", "web/vendor/sql-wasm.wasm", "web/vendor/sql-wasm-b64.js"]
+    }
+  ],
+  "database": {
+    "file": "reviews.db (git-ignored; synthetic sample.db ships)",
+    "tables": {
+      "reviews": {"pk": ["source", "app_slug", "review_id"], "note": "COALESCE upsert: a None parse never overwrites"},
+      "apps": {"pk": ["source", "app_slug"], "note": "product = cross-source grouping from optional local products.json"},
+      "scrape_progress": {"pk": ["app_slug", "ratings_key"], "note": "--refresh requires completed=1 and never writes here"},
+      "review_tags": {
+        "columns": ["theme (14 controlled)", "kind (feature_gap|feature_request|service|pricing|bug|praise)", "churn_signal", "switched_to", "quote", "confidence", "vendor_ack (none|acknowledged|roadmap|shipped|disputed; NULL = pre-migration, no backfill)", "tagged_at"]
+      },
+      "snapshots + snapshot_scores": {"created_by": "opportunity_report.py", "purpose": "score history for --diff (new/risers/fallers/gone-quiet)"}
+    }
+  },
+  "tests": {
+    "files": ["tests/test_parse.py (8: parsers vs tests/fixtures/*.html)", "tests/test_refresh.py (5: delta logic, fetch monkeypatched)", "tests/test_trend.py (5: classification, normative for JS)"],
+    "run": "uv run tests/<file>.py",
+    "live_canary": "uv run scrape.py <slug> --check"
+  },
+  "docs": [
+    {"path": "README.md", "topic": "Usage incl. radar loop, tests, responsible use"},
+    {"path": "docs/tagging-rubric.md", "topic": "Tagging SSOT incl. vendor_ack; doubles as the --auto prompt"},
+    {"path": "docs/specs/radar-signal-robustness-requirements.md", "topic": "Requirements (accepted)"},
+    {"path": "docs/specs/radar-signal-robustness-design.md", "topic": "Design decisions incl. implementation deviations"},
+    {"path": "docs/specs/review-scraper-design.md", "topic": "Original scraper design; selector inventory"}
+  ],
+  "constraints": [
+    "Privacy hooks (.githooks) block reviews.db, products.json, exports/, real target-app names, home paths, personal emails; exports/ holds quarantine + theme-candidates so they are auto-protected",
+    "Keep --delay >= 3s; backoff must survive in every new mode",
+    "Scoring AND trend exist twice (Python + JS in reviews.html); Python trend_of is normative — change both together",
+    "No external API in core: claude -p driver is optional plumbing; manual export/import flow unchanged",
+    "DB migrations must stay idempotent and backward-compatible (PRAGMA-checked ALTERs); sample.db must keep working in the UI"
+  ]
+}

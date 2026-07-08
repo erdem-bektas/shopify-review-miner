@@ -8,6 +8,8 @@ Usage:
     uv run scrape.py some-app-slug
     uv run scrape.py some-app-slug another-app-slug --ratings 1,2,3
     uv run scrape.py https://apps.shopify.com/some-app-slug --ratings 1 --delay 4
+    uv run scrape.py some-app-slug --refresh   # delta: stop at known reviews
+    uv run scrape.py some-app-slug --check     # live selector canary, no writes
 
 Re-runs are incremental: reviews upsert by (app_slug, review_id), and an
 interrupted run continues exactly where it stopped with --resume (progress is
@@ -181,6 +183,12 @@ def parse_star_distribution(soup: BeautifulSoup) -> dict[int, int]:
         stars = re.findall(r"ratings(?:%5B%5D|\[\])=(\d)", href)
         if len(stars) != 1 or "page=" in href:
             continue
+        # the aria-label carries the exact count ("2572 total reviews") while
+        # the link text is rounded ("2.6K") — prefer exact, fall back to text
+        am = re.match(r"([\d,]+)\s+total reviews", link.get("aria-label") or "")
+        if am:
+            dist[int(stars[0])] = int(am.group(1).replace(",", ""))
+            continue
         text = link.get_text(" ", strip=True)
         cm = re.fullmatch(r"([\d.,]+)\s*([Kk])?", text)
         if not cm:
@@ -188,6 +196,24 @@ def parse_star_distribution(soup: BeautifulSoup) -> dict[int, int]:
         n = float(cm.group(1).replace(",", ""))
         dist[int(stars[0])] = int(n * 1000) if cm.group(2) else int(n)
     return dist
+
+
+def app_name_from_title(soup: BeautifulSoup) -> str | None:
+    title = soup.select_one("title")
+    if not title:
+        return None
+    name = re.sub(r"\s*[-–—|].*$", "", title.get_text(strip=True)).strip()
+    return re.sub(r"^Reviews:\s*", "", name) or None
+
+
+def plausible_listing_end(page: int, expected: int) -> bool:
+    """Is a 0-block page at `page` believable as the end of the listing?
+
+    True when the pages walked so far already cover most of the expected
+    count; False means the listing should still be going — the selectors
+    probably broke. 0.7 absorbs star-count rounding and deleted reviews.
+    """
+    return expected <= 0 or (page - 1) * 10 >= 0.7 * expected
 
 
 def parse_reviews(soup: BeautifulSoup) -> tuple[list[dict], int]:
@@ -255,9 +281,21 @@ def parse_reviews(soup: BeautifulSoup) -> tuple[list[dict], int]:
     return out, n_blocks
 
 
+def _review_changed(old: tuple, new: dict) -> bool:
+    """Mirror the upsert's COALESCE semantics: a None parse never overwrites,
+    so only a non-None differing value (or a raised edited flag) is a change."""
+    _, rating, review_date, body, dev_reply, edited = old
+    return any(
+        nv is not None and nv != ov
+        for nv, ov in ((new["rating"], rating), (new["review_date"], review_date),
+                       (new["body"], body), (new["dev_reply"], dev_reply))
+    ) or (new["edited"] or 0) > (edited or 0)
+
+
 def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
                ratings: list[int] | None, delay: float, max_pages: int,
-               resume: bool = False) -> None:
+               resume: bool = False, refresh: bool = False,
+               stop_after_known: int = 2) -> None:
     url = f"{BASE}/{slug}/reviews"
     params: dict = {"sort_by": "newest"}
     if ratings:
@@ -266,6 +304,17 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
 
     print(f"Scraping {slug} (stars: {ratings_key})")
 
+    if refresh:
+        # Early-stop is only sound over a fully crawled population: an
+        # incomplete baseline would make every unscraped page look "new".
+        row = conn.execute(
+            "SELECT completed FROM scrape_progress "
+            "WHERE app_slug = ? AND ratings_key = ?", (slug, ratings_key)).fetchone()
+        if not row or not row[0]:
+            print("  no completed baseline for this filter — falling back to a "
+                  "full scrape", file=sys.stderr)
+            refresh = False
+
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # Distribution counts come from the unfiltered page: on filtered pages the
@@ -273,11 +322,7 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
     first_html = fetch(session, url, {"sort_by": "newest", "page": 1})
     first_soup = BeautifulSoup(first_html, "html.parser")
     dist = parse_star_distribution(first_soup)
-    app_name = None
-    title = first_soup.select_one("title")
-    if title:
-        app_name = re.sub(r"\s*[-–—|].*$", "", title.get_text(strip=True)).strip()
-        app_name = re.sub(r"^Reviews:\s*", "", app_name)
+    app_name = app_name_from_title(first_soup)
     expected = sum(dist.get(s, 0) for s in ratings) if ratings else sum(dist.values())
     print(f"  distribution {dict(sorted(dist.items(), reverse=True))}, "
           f"expecting ~{expected} reviews (K-counts are approximate)")
@@ -297,6 +342,7 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
             print("  no interrupted run recorded for this filter; starting from page 1")
 
     total_saved = 0
+    n_new = n_updated = pages_fetched = consec_known = 0
     cap_hit = True  # flips to False when we see the listing's natural end
     for page in range(start_page, max_pages + 1):
         if page == start_page and page == 1 and not ratings:
@@ -307,6 +353,32 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
             soup = BeautifulSoup(html, "html.parser")
 
         reviews, n_blocks = parse_reviews(soup)
+        # DOM-rot guards: a 0-block page mid-listing, or blocks that all fail
+        # to parse, must abort loudly — never masquerade as the natural end.
+        if n_blocks == 0 and not plausible_listing_end(page, expected):
+            raise RuntimeError(
+                f"page {page} has 0 review blocks but ~{expected} reviews "
+                f"expected — selectors likely broke; run scrape.py --check {slug}")
+        if n_blocks > 0 and not reviews:
+            raise RuntimeError(
+                f"page {page}: {n_blocks} review blocks, none parsed — "
+                f"selectors likely broke; run scrape.py --check {slug}")
+        page_all_known = False
+        if refresh and reviews:
+            ids = [r["review_id"] for r in reviews]
+            marks = ",".join("?" * len(ids))
+            existing = {row[0]: row for row in conn.execute(
+                f"""SELECT review_id, rating, review_date, body, dev_reply, edited
+                    FROM reviews WHERE source = ? AND app_slug = ?
+                    AND review_id IN ({marks})""", [SOURCE, slug, *ids])}
+            page_all_known = len(existing) == len(ids)
+            for r in reviews:
+                old = existing.get(r["review_id"])
+                if old is None:
+                    n_new += 1
+                elif _review_changed(old, r):
+                    n_updated += 1
+
         if reviews:
             conn.executemany(
                 """INSERT INTO reviews (source, app_slug, review_id, rating,
@@ -329,18 +401,29 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
                 [{**r, "source": SOURCE, "app_slug": slug, "scraped_at": now}
                  for r in reviews],
             )
-        conn.execute(
-            """INSERT INTO scrape_progress (app_slug, ratings_key, next_page,
-                                            completed, updated_at)
-               VALUES (?, ?, ?, 0, ?)
-               ON CONFLICT (app_slug, ratings_key) DO UPDATE SET
-                 next_page=excluded.next_page, completed=0,
-                 updated_at=excluded.updated_at""",
-            (slug, ratings_key, page + 1, now),
-        )
+        if not refresh:
+            # refresh never touches progress: the baseline stays "completed"
+            conn.execute(
+                """INSERT INTO scrape_progress (app_slug, ratings_key, next_page,
+                                                completed, updated_at)
+                   VALUES (?, ?, ?, 0, ?)
+                   ON CONFLICT (app_slug, ratings_key) DO UPDATE SET
+                     next_page=excluded.next_page, completed=0,
+                     updated_at=excluded.updated_at""",
+                (slug, ratings_key, page + 1, now),
+            )
         conn.commit()
         total_saved += len(reviews)
+        pages_fetched += 1
         print(f"  page {page}: {len(reviews)} reviews ({total_saved} this run)")
+
+        if refresh:
+            consec_known = consec_known + 1 if page_all_known else 0
+            if consec_known >= stop_after_known:
+                cap_hit = False
+                print(f"  refresh: {stop_after_known} consecutive all-known pages "
+                      f"— stopping early")
+                break
 
         if n_blocks < 10:  # short or empty page = end of listing
             cap_hit = False
@@ -349,7 +432,7 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
     if cap_hit:
         print(f"  WARNING: stopped at --max-pages {max_pages} before the end of the "
               f"listing — re-run with --resume to continue", file=sys.stderr)
-    else:
+    elif not refresh:
         conn.execute(
             "UPDATE scrape_progress SET completed = 1, updated_at = ? "
             "WHERE app_slug = ? AND ratings_key = ?", (now, slug, ratings_key))
@@ -370,7 +453,56 @@ def scrape_app(conn: sqlite3.Connection, session: requests.Session, slug: str,
          dist.get(5), dist.get(4), dist.get(3), dist.get(2), dist.get(1), now),
     )
     conn.commit()
-    print(f"  done: {total_saved} reviews saved this run for {slug}")
+    if refresh:
+        print(f"  refresh done: +{n_new} new, ~{n_updated} updated "
+              f"({pages_fetched} pages fetched) for {slug}")
+    else:
+        print(f"  done: {total_saved} reviews saved this run for {slug}")
+
+
+def check_app(session: requests.Session, slug: str) -> list[str]:
+    """Fetch one live page and verify every selector still extracts data.
+
+    Field checks are systemic: DOM rot breaks a field on EVERY review, so a
+    check fails only when no review on the page yields the field. Returns the
+    list of failed check names (empty = healthy). Writes nothing to the db.
+    """
+    url = f"{BASE}/{slug}/reviews"
+    soup = BeautifulSoup(fetch(session, url, {"sort_by": "newest", "page": 1}),
+                         "html.parser")
+    fails: list[str] = []
+
+    def report(ok: bool, label: str, detail: str) -> None:
+        print(f"  {'✓' if ok else '✗'} {label}: {detail}")
+        if not ok:
+            fails.append(label)
+
+    app_name = app_name_from_title(soup)
+    report(bool(app_name), "app name from <title>", app_name or "not found")
+
+    dist = parse_star_distribution(soup)
+    report(bool(dist), "star-distribution links",
+           str(dict(sorted(dist.items(), reverse=True))) if dist else "none found")
+
+    reviews, n_blocks = parse_reviews(soup)
+    total = sum(dist.values())
+    report(n_blocks > 0 or total == 0, "review blocks",
+           f"{n_blocks} on page 1 (~{total} reviews listed)")
+    report(bool(reviews) or n_blocks == 0, "blocks parse",
+           f"{len(reviews)}/{n_blocks}")
+
+    if reviews:
+        n = len(reviews)
+        for label, pred in [
+            ("rating", lambda r: r["rating"] in (1, 2, 3, 4, 5)),
+            ("review_date", lambda r: re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                                   r["review_date"] or "")),
+            ("body", lambda r: r["body"] is not None),
+            ("shop_name", lambda r: bool(r["shop_name"])),
+        ]:
+            good = sum(1 for r in reviews if pred(r))
+            report(good > 0, label, f"{good}/{n}")
+    return fails
 
 
 def main() -> None:
@@ -382,7 +514,21 @@ def main() -> None:
     ap.add_argument("--max-pages", type=int, default=2000, help="safety cap per app")
     ap.add_argument("--resume", action="store_true",
                     help="continue an interrupted run from where the db left off")
+    ap.add_argument("--refresh", action="store_true",
+                    help="delta mode: walk newest-first and stop early once "
+                         "pages contain only already-known reviews (needs a "
+                         "completed baseline scrape for the same filter)")
+    ap.add_argument("--stop-after-known", type=int, default=2, metavar="K",
+                    help="consecutive all-known pages that end a --refresh "
+                         "(default 2)")
+    ap.add_argument("--check", action="store_true",
+                    help="canary: fetch one live page per app and verify every "
+                         "selector still works; no db writes")
     args = ap.parse_args()
+
+    if args.refresh and args.resume:
+        ap.error("--refresh and --resume are mutually exclusive: --resume "
+                 "finishes an interrupted crawl, --refresh assumes a finished one")
 
     ratings = None
     if args.ratings:
@@ -390,18 +536,34 @@ def main() -> None:
         if not all(1 <= r <= 5 for r in ratings):
             ap.error("--ratings values must be 1..5")
 
-    conn = sqlite3.connect(args.db)
-    ensure_schema(conn)
-
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
+
+    if args.check:
+        broken = []
+        for i, app in enumerate(args.apps):
+            slug = slug_of(app)
+            if i:
+                time.sleep(args.delay + random.uniform(0, args.delay / 2))
+            print(f"Checking {slug}")
+            if check_app(session, slug):
+                broken.append(slug)
+        if broken:
+            print(f"CHECK FAILED for: {', '.join(broken)}", file=sys.stderr)
+            sys.exit(1)
+        print("all checks passed")
+        return
+
+    conn = sqlite3.connect(args.db)
+    ensure_schema(conn)
 
     failed = []
     for app in args.apps:
         slug = slug_of(app)
         try:
             scrape_app(conn, session, slug, ratings, args.delay, args.max_pages,
-                       resume=args.resume)
+                       resume=args.resume, refresh=args.refresh,
+                       stop_after_known=args.stop_after_known)
         except (RuntimeError, requests.exceptions.RequestException) as e:
             n = conn.execute("SELECT COUNT(*) FROM reviews WHERE app_slug = ?",
                              (slug,)).fetchone()[0]
